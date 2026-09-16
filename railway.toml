@@ -1,5 +1,0 @@
-[build]
-builder = "railpack"
-
-[deploy]
-startCommand = "npm start"
