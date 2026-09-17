@@ -150,17 +150,89 @@ app.post('/api/plaid/exchange', async (req, res) => {
   }
 });
 
-const appCategory = (t) => {
+const transactionText = (t) =>
+  `${t.merchant_name || ''} ${t.name || ''} ${t.original_description || ''}`.toLowerCase();
+
+const financeCategory = (t) => {
   const p = t.personal_finance_category || {};
-  const primary = (p.primary || '').toUpperCase();
-  const detailed = (p.detailed || '').toUpperCase();
-  const name = (t.merchant_name || t.name || '').toLowerCase();
+  return {
+    primary: String(p.primary || '').toUpperCase(),
+    detailed: String(p.detailed || '').toUpperCase()
+  };
+};
+
+const cents = (n) => Math.round(Math.abs(Number(n || 0)) * 100);
+
+const dayDistance = (a, b) => {
+  const da = new Date(`${a}T12:00:00Z`).getTime();
+  const db = new Date(`${b}T12:00:00Z`).getTime();
+  if (!Number.isFinite(da) || !Number.isFinite(db)) return 999;
+  return Math.abs(da - db) / 86400000;
+};
+
+function matchingCounterpart(t, allPosted) {
+  const amount = Number(t.amount || 0);
+  if (!amount) return null;
+  return allPosted.find(other =>
+    other.transaction_id !== t.transaction_id &&
+    other.account_id !== t.account_id &&
+    Number(other.amount || 0) * amount < 0 &&
+    cents(other.amount) === cents(amount) &&
+    dayDistance(other.date, t.date) <= 3
+  ) || null;
+}
+
+function isChurchTithing(t) {
+  const name = transactionText(t);
+  return /church of jesus christ|the church of jesus christ|lds church|church donations?|tithing/.test(name);
+}
+
+function isVenmoRent(t) {
+  return Number(t.amount || 0) >= 1000 && /\bvenmo\b/.test(transactionText(t));
+}
+
+function isCreditCardPayment(t, allPosted, accountMetaById) {
+  if (Number(t.amount || 0) <= 0) return false;
+  const { detailed } = financeCategory(t);
+  const name = transactionText(t);
+
+  // User-specific rules: money sent to account ending 4321 or to Discover is a card payoff.
+  if (/\b4321\b/.test(name) || /\bdiscover\b/.test(name)) return true;
+  if (detailed.includes('CREDIT_CARD_PAYMENT')) return true;
+
+  // If the matching other side of the transfer is a connected credit-card account,
+  // classify the outgoing checking-side transaction as a card payment.
+  const other = matchingCounterpart(t, allPosted);
+  if (!other) return false;
+  const meta = accountMetaById[other.account_id] || {};
+  const metaName = `${meta.name || ''} ${meta.official_name || ''}`.toLowerCase();
+  return meta.mask === '4321' || meta.type === 'credit' || /\bdiscover\b/.test(metaName);
+}
+
+function isInternalAccountTransfer(t, allPosted) {
+  if (Number(t.amount || 0) <= 0) return false;
+  return !!matchingCounterpart(t, allPosted);
+}
+
+const appCategory = (t, allPosted, accountMetaById) => {
+  const { primary, detailed } = financeCategory(t);
+  const name = transactionText(t);
+
+  // User-specific rules take priority over Plaid's generic categories.
+  if (isChurchTithing(t)) return 'Tithing';
+  if (isVenmoRent(t)) return 'Rent';
+  if (isCreditCardPayment(t, allPosted, accountMetaById)) return 'Card Payment';
+  if (isInternalAccountTransfer(t, allPosted)) return 'Transfer';
+
   if (primary === 'FOOD_AND_DRINK') {
     if (detailed.includes('GROCER') || /walmart|costco|smith|maceys|target/.test(name)) return 'Groceries';
     return 'Eating Out / Date Nights';
   }
   if (primary === 'TRANSPORTATION') return /gas|fuel|chevron|shell|maverik|costco/.test(name) ? 'Gas' : 'Transportation';
-  if (primary === 'RENT_AND_UTILITIES') return 'Utilities (Phone, Internet, Electric)';
+  if (primary === 'RENT_AND_UTILITIES') {
+    if (detailed.includes('RENT') || /\brent\b|landlord|apartment|property management/.test(name)) return 'Rent';
+    return 'Utilities (Phone, Internet, Electric)';
+  }
   if (primary === 'MEDICAL') return 'Health / Medical';
   if (primary === 'GENERAL_MERCHANDISE') return 'Household Misc';
   if (primary === 'ENTERTAINMENT') return 'Fun Money';
@@ -168,12 +240,12 @@ const appCategory = (t) => {
   return 'Household Misc';
 };
 
-function txToMoneyHQ(t, accountNameById) {
+function txToMoneyHQ(t, accountNameById, allPosted, accountMetaById) {
   return {
     plaidId: t.transaction_id,
     date: t.date,
     amt: Math.round(Number(t.amount) * 100) / 100,
-    cat: appCategory(t),
+    cat: appCategory(t, allPosted, accountMetaById),
     who: 'Joint',
     desc: t.merchant_name || t.name || 'Bank transaction',
     pay: accountNameById[t.account_id] || 'Checking',
@@ -181,14 +253,15 @@ function txToMoneyHQ(t, accountNameById) {
   };
 }
 
-function isIncomeTransaction(t) {
-  const p = t.personal_finance_category || {};
-  const primary = String(p.primary || '').toUpperCase();
+function isIncomeTransaction(t, allPosted) {
+  // A matched opposite-side transaction means this is money moved between the
+  // user's own connected accounts, not new income.
+  if (matchingCounterpart(t, allPosted)) return false;
+
+  const { primary } = financeCategory(t);
   if (primary === 'INCOME') return true;
 
-  // Conservative fallback for the small percentage of transactions that may not
-  // receive a Personal Finance Category. Do not treat generic ACH credits/transfers
-  // as income, since those are often moves between the user's own accounts.
+  // Conservative fallback for transactions Plaid did not label as INCOME.
   const name = String(t.merchant_name || t.name || '');
   return /\b(payroll|paycheck|salary|wages|direct deposit)\b/i.test(name);
 }
@@ -228,10 +301,11 @@ app.post('/api/plaid/sync', async (_req, res) => {
 
     const ar = await plaid.accountsGet({ access_token: state.access_token });
     const accountNameById = Object.fromEntries(ar.data.accounts.map(a => [a.account_id, a.name]));
+    const accountMetaById = Object.fromEntries(ar.data.accounts.map(a => [a.account_id, a]));
     const changedPosted = [...added, ...modified].filter(t => !t.pending);
     const spend = changedPosted.filter(t => Number(t.amount) > 0);
-    const incomePosted = changedPosted.filter(t => Number(t.amount) < 0 && isIncomeTransaction(t));
-    const tx = spend.map(t => txToMoneyHQ(t, accountNameById));
+    const incomePosted = changedPosted.filter(t => Number(t.amount) < 0 && isIncomeTransaction(t, changedPosted));
+    const tx = spend.map(t => txToMoneyHQ(t, accountNameById, changedPosted, accountMetaById));
     const income = incomePosted.map(t => txToIncome(t, accountNameById));
     const today = new Date().toISOString().slice(0, 10);
     const accounts = ar.data.accounts.map(a => ({
@@ -254,7 +328,8 @@ app.post('/api/plaid/sync', async (_req, res) => {
       institution: state.institution || 'Bank',
       transactionsStatus
     });
-    console.log(`[Plaid] Sync complete: ${ar.data.accounts.length} accounts, ${tx.length} purchases, ${income.length} income deposits, status=${transactionsStatus || 'unknown'}`);
+    const excludedCount = tx.filter(t => t.cat === 'Transfer' || t.cat === 'Card Payment').length;
+    console.log(`[Plaid] Sync complete: ${ar.data.accounts.length} accounts, ${tx.length} outgoing rows (${excludedCount} transfers/card payments), ${income.length} income deposits, status=${transactionsStatus || 'unknown'}`);
   } catch (e) {
     console.error('[Plaid] Sync failed:', safeError(e));
     res.status(500).json({ error: safeError(e) });

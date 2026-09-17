@@ -398,10 +398,10 @@ if ("serviceWorker" in navigator) {
     if(busy && !silent)return;
     busy=true; if(!silent)render();
     try{
-      const needsFullBackfill = localStorage.getItem('moneyhq-plaid-full-loaded-v2') !== '1';
+      const needsFullBackfill = localStorage.getItem('moneyhq-plaid-full-loaded-v3') !== '1';
       const data=await jfetch(API+'/sync'+(needsFullBackfill?'?full=1':''),{method:'POST',body:'{}'});
       if ((data.tx||[]).length > 0 || (data.income||[]).length > 0 || data.transactionsStatus === 'HISTORICAL_UPDATE_COMPLETE') {
-        try { localStorage.setItem('moneyhq-plaid-full-loaded-v2', '1'); } catch(e) {}
+        try { localStorage.setItem('moneyhq-plaid-full-loaded-v3', '1'); } catch(e) {}
       }
       // Keep the latest successful Plaid payload until React has actually applied it.
       // This makes the handoff reliable even if the bank sync finishes before the app mounts.
@@ -754,6 +754,7 @@ const SEED = {
   "tx": [],
   "budget": [
     {"cat":"Rent","group":"Housing","amt":0,"note":""},
+    {"cat":"Tithing","group":"Giving","amt":0,"note":""},
     {"cat":"Utilities (Phone, Internet, Electric)","group":"Housing","amt":0,"note":""},
     {"cat":"Groceries","group":"Food","amt":0,"note":""},
     {"cat":"Eating Out / Date Nights","group":"Food","amt":0,"note":""},
@@ -803,7 +804,7 @@ const FONT = {
 const NUM = {
   fontVariantNumeric: "tabular-nums"
 };
-const EXCLUDE = ["Card Payment", "Car Purchase (One-Time)"]; // transfers, not spending
+const EXCLUDE = ["Card Payment", "Transfer", "Car Purchase (One-Time)"]; // transfers/card payoffs are not spending
 const CARDS = [];
 const PAY = ["Checking", "Cash"];
 const WHO = ["Joint", "Person 1", "Person 2"];
@@ -1592,6 +1593,14 @@ function App() {
         const manualTx = (prev.tx || []).filter(t => !t.plaidId);
         const mergedTx = [...manualTx, ...byPlaidId.values()];
 
+        // Keep the original Plan UI, but add a Giving/Tithing row automatically
+        // when Plaid finds church donations. Existing users may have saved state
+        // from before this category existed, so this is a tiny data migration.
+        let mergedBudget = prev.budget || [];
+        if (incomingTx.some(t => t && t.cat === 'Tithing') && !mergedBudget.some(b => b.cat === 'Tithing')) {
+          mergedBudget = [...mergedBudget, { id: uid(), cat: 'Tithing', group: 'Giving', amt: 0, note: '' }];
+        }
+
         // Income is stored separately from spending. Plaid income rows represent the
         // take-home amount that actually posted to the bank account.
         const incomeByPlaidId = new Map();
@@ -1635,6 +1644,7 @@ function App() {
           ...prev,
           tx: mergedTx,
           income: mergedIncome,
+          budget: mergedBudget,
           networth: [...keptNetworth, ...normalizedAccounts],
           bankSync: {
             ...(prev.bankSync || {}),
