@@ -2564,14 +2564,18 @@ function App() {
       }
     }, f.id ? "Edit transaction" : "New transaction"), /*#__PURE__*/React.createElement("div", {
       className: "grid grid-cols-2 gap-2"
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Label, null, "Date"), /*#__PURE__*/React.createElement(Input, {
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "col-span-2"
+    }, /*#__PURE__*/React.createElement(Label, null, "Date"), /*#__PURE__*/React.createElement(Input, {
       type: "date",
       value: f.date,
       onChange: e => setF({
         ...f,
         date: e.target.value
       })
-    })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Label, null, "Amount"), /*#__PURE__*/React.createElement(Input, {
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "col-span-2"
+    }, /*#__PURE__*/React.createElement(Label, null, "Amount"), /*#__PURE__*/React.createElement(Input, {
       inputMode: "decimal",
       value: f.amt,
       onChange: e => setF({
