@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Money HQ</title>
-<meta name="theme-color" content="#2F6F5E">
+<meta name="theme-color" content="#F7F4ED">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -19,6 +19,9 @@ html,body{margin:0;padding:0;background:#F7F4ED;
   -webkit-text-size-adjust:100%}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select,textarea{font-family:inherit;font-size:16px}
+.grid>*{min-width:0}
+input[type=date]{display:block;min-width:0!important;max-width:100%!important;width:100%!important;box-sizing:border-box;-webkit-appearance:none;appearance:none}
+input[type=date]::-webkit-date-and-time-value{text-align:left;min-width:0}
 input[type=number]{-moz-appearance:textfield}
 input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .flex{display:flex}.grid{display:grid}.hidden{display:none}.inline-block{display:inline-block}
@@ -330,8 +333,10 @@ if ("serviceWorker" in navigator) {
 </script>
 </head>
 <body>
+<div id="bank-feed-toolbar" style="width:100%;background:#F7F4ED;padding-top:env(safe-area-inset-top,0px)">
+  <div id="bank-feed-control" style="min-height:52px;padding:8px 16px 4px;max-width:42rem;margin:0 auto;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font-family:Trebuchet MS,Segoe UI,system-ui,sans-serif"></div>
+</div>
 <div id="root"></div>
-<div id="bank-feed-control" style="position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:12px;z-index:1000;font-family:Trebuchet MS,Segoe UI,system-ui,sans-serif"></div>
 <script>
 (function(){
   const API = '/api/plaid';
@@ -344,7 +349,7 @@ if ("serviceWorker" in navigator) {
     b.textContent=label;
     b.onclick=onClick;
     b.disabled=busy;
-    b.style.cssText='border:0;border-radius:999px;padding:9px 13px;font-weight:700;font-size:12px;box-shadow:0 5px 18px rgba(60,55,45,.18);background:'+(muted?'#EEEAE2':'#2F6F5E')+';color:'+(muted?'#5B4A55':'#fff')+';';
+    b.style.cssText='border:1px solid '+(muted?'#D9D2C6':'#2F6F5E')+';border-radius:999px;padding:8px 12px;font-weight:700;font-size:12px;box-shadow:none;background:'+(muted?'#FFFDF9':'#2F6F5E')+';color:'+(muted?'#2F6F5E':'#fff')+';';
     return b;
   }
   function render(message){
@@ -352,7 +357,7 @@ if ("serviceWorker" in navigator) {
     if(message){
       const m=document.createElement('div');
       m.textContent=message;
-      m.style.cssText='font-size:11px;color:#5B4A55;background:rgba(255,255,255,.94);padding:6px 9px;border-radius:10px;margin-bottom:6px;max-width:220px;box-shadow:0 3px 12px rgba(0,0,0,.08)';
+      m.style.cssText='font-size:11px;color:#5B4A55;background:#FFFDF9;padding:6px 9px;border:1px solid #E9E3D7;border-radius:10px;margin-bottom:6px;max-width:260px;box-shadow:none';
       el.appendChild(m);
     }
     if (connected) {
@@ -781,7 +786,7 @@ const SEED = {
     "rateD":0,"rateH":0,"hoursDsummer":0,"hoursDschool":0,"hoursHsummer":0,"hoursHschool":0,
     "schoolStarts":"","dedRate":0,"startMonth":"2026-09-01","goal":0,"growth":0,"moveMonth":"",
     "moveSaves":0,"k401pct":0,"matchPct":0,"hsaEmp":0,"hsaEmployer":0,"k401base":0,"hsaBase":0,
-    "baseAsOf":"","plannedNet":0,"plannedSave":0,"graduationDate":"","loanTermYears":10
+    "baseAsOf":"","plannedNet":0,"plannedSave":0,"graduationDate":""
   },
   "debts": [],
   "studentLoans": [],
@@ -1187,10 +1192,7 @@ const Icon = ({
     stroke: col,
     strokeWidth: 2.4,
     strokeLinecap: "round",
-    strokeLinejoin: "round",
-    style: {
-      transition: "stroke .22s ease"
-    }
+    strokeLinejoin: "round"
   };
   const paths = {
     Home: /*#__PURE__*/React.createElement("g", p, /*#__PURE__*/React.createElement("path", {
@@ -1256,7 +1258,7 @@ const Icon = ({
   }, paths[name]);
 };
 
-/* ---------- iOS Liquid Glass tab bar ---------- */
+/* ---------- Liquid Glass tab bar ---------- */
 const haptic = kind => {
   try {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -1275,121 +1277,224 @@ const GlassNav = ({
   Icon,
   accent
 }) => {
+  const n = tabs.length;
+  const barRef = useRef(null),
+    lensRef = useRef(null);
+  const [barW, setBarW] = useState(0);
+  const [shown, setShown] = useState(active);
+  const target = useRef(active),
+    p = useRef(active),
+    v = useRef(0);
+  const raf = useRef(null),
+    slot = useRef(0),
+    press = useRef(false),
+    drag = useRef(null);
+
+  /* write straight to the element — the spring never re-renders React */
+  const paint = () => {
+    const el = lensRef.current,
+      s = slot.current;
+    if (!el || !s) return;
+    const w = s - 8;
+    const stretch = Math.min(0.34, Math.abs(v.current) * 1.15);
+    const lead = v.current === 0 ? 0 : Math.sign(v.current) * stretch * w * 0.30;
+    el.style.width = w + Math.abs(lead) * 2 + "px";
+    el.style.transform = "translate3d(" + (p.current * s - Math.abs(lead)) + "px,0,0) scale(" + (press.current ? 0.965 : 1) + ")";
+  };
+  const tick = () => {
+    const k = 0.28,
+      damp = 0.57; // one small overshoot, then settled (~300ms)
+    v.current = (v.current + (target.current - p.current) * k) * damp;
+    p.current += v.current;
+    if (Math.abs(target.current - p.current) < 0.0015 && Math.abs(v.current) < 0.0015) {
+      p.current = target.current;
+      v.current = 0;
+      paint();
+      raf.current = null;
+      return;
+    }
+    paint();
+    raf.current = requestAnimationFrame(tick);
+  };
+  const springTo = i => {
+    target.current = i;
+    if (raf.current == null) raf.current = requestAnimationFrame(tick);
+  };
+  useEffect(() => {
+    const measure = () => {
+      if (!barRef.current) return;
+      const w = barRef.current.getBoundingClientRect().width;
+      slot.current = w / n;
+      setBarW(w);
+      paint();
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("resize", measure);
+      if (raf.current) cancelAnimationFrame(raf.current);
+    };
+  }, [n]);
+  useEffect(() => {
+    if (active !== shown) {
+      setShown(active);
+    }
+    springTo(active);
+  }, [active]);
+  const idxFromX = x => {
+    const r = barRef.current.getBoundingClientRect();
+    return Math.max(0, Math.min(n - 1, Math.floor((x - r.left) / r.width * n)));
+  };
+  const down = e => {
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    drag.current = {
+      x0: x,
+      moved: false,
+      i: idxFromX(x)
+    };
+    press.current = true;
+    paint();
+  };
+  const move = e => {
+    if (!drag.current) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    if (!drag.current.moved && Math.abs(x - drag.current.x0) < 8) return; // taps stay taps
+    drag.current.moved = true;
+    if (e.cancelable) e.preventDefault();
+    const i = idxFromX(x);
+    if (i !== drag.current.i) {
+      drag.current.i = i;
+      haptic("move");
+      setShown(i);
+      springTo(i);
+    }
+  };
+  const up = () => {
+    const d = drag.current;
+    drag.current = null;
+    press.current = false;
+    paint();
+    if (!d || !d.moved) return;
+    if (d.i !== active) {
+      haptic("select");
+      onChange(tabs[d.i]);
+    } else springTo(active);
+  };
   const tap = (t, i) => {
-    haptic(i === active ? "move" : "select");
-    if (i !== active) onChange(t);
+    if (drag.current && drag.current.moved) return;
+    if (i === active) {
+      haptic("move");
+      springTo(i);
+      return;
+    }
+    haptic("select");
+    setShown(i);
+    springTo(i);
+    onChange(t);
   };
   return /*#__PURE__*/React.createElement("nav", {
-    "aria-label": "Main navigation",
     style: {
       position: "fixed",
       left: 0,
       right: 0,
-      bottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
+      bottom: 0,
       zIndex: 60,
-      pointerEvents: "none"
+      pointerEvents: "none",
+      paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 10px)"
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "max-w-2xl mx-auto",
     style: {
+      padding: "0 14px",
+      pointerEvents: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    ref: barRef,
+    className: "lg-bar",
+    onTouchStart: down,
+    onTouchMove: move,
+    onTouchEnd: up,
+    onTouchCancel: up,
+    onMouseDown: down,
+    onMouseMove: move,
+    onMouseUp: up,
+    onMouseLeave: up,
+    style: {
       position: "relative",
       display: "flex",
-      width: "calc(100% - 20px)",
-      height: 64,
-      padding: 4,
-      borderRadius: 32,
-      overflow: "hidden",
-      pointerEvents: "auto",
+      height: 70,
+      borderRadius: 35,
+      touchAction: "pan-y",
       background: "linear-gradient(180deg, rgba(210,210,214,.44) 0%, rgba(174,174,178,.30) 44%, rgba(120,120,128,.34) 100%)",
       backdropFilter: "blur(28px) saturate(190%) brightness(1.08)",
       WebkitBackdropFilter: "blur(28px) saturate(190%) brightness(1.08)",
+      boxShadow: ["inset 0 1px 0 rgba(255,255,255,.68)", "inset 0 -1px 0 rgba(60,60,67,.08)", "0 10px 26px rgba(45,45,50,.14)", "0 2px 6px rgba(45,45,50,.08)"].join(","),
       border: "0.75px solid rgba(255,255,255,.60)",
-      boxShadow: "inset 0 1px 0 rgba(255,255,255,.68), inset 0 -1px 0 rgba(60,60,67,.08), 0 10px 26px rgba(45,45,50,.14), 0 2px 6px rgba(45,45,50,.08)"
+      overflow: "hidden"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    "aria-hidden": "true",
-    style: {
-      position: "absolute",
-      inset: 0,
-      zIndex: 0,
-      pointerEvents: "none",
-      borderRadius: 32,
-      background: "radial-gradient(120% 75% at 50% -18%, rgba(255,255,255,.52) 0%, rgba(255,255,255,.14) 48%, transparent 72%)"
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    "aria-hidden": "true",
+    ref: lensRef,
+    className: "lg-lens",
     style: {
       position: "absolute",
       top: 5,
       bottom: 5,
       left: 4,
-      zIndex: 1,
-      width: `calc((100% - 8px) / ${tabs.length})`,
-      borderRadius: 27,
+      width: barW > 0 ? barW / n - 8 : `calc(${100 / n}% - 8px)`,
+      transform: barW > 0 ? `translate3d(${active * (barW / n)}px,0,0)` : `translate3d(calc(${active * 100}% + ${active * 8}px),0,0)`,
+      borderRadius: 999,
       pointerEvents: "none",
-      transform: `translate3d(${active * 100}%,0,0)`,
-      transition: "transform .46s cubic-bezier(.22,1.18,.34,1)",
-      willChange: "transform",
-      background: "linear-gradient(180deg, rgba(255,255,255,.56), rgba(255,255,255,.22))",
-      backdropFilter: "blur(12px) saturate(175%) brightness(1.12)",
-      WebkitBackdropFilter: "blur(12px) saturate(175%) brightness(1.12)",
-      border: "0.75px solid rgba(255,255,255,.78)",
-      boxShadow: "inset 0 1px 1px rgba(255,255,255,.86), inset 0 -1px 1px rgba(255,255,255,.18), 0 2px 8px rgba(60,60,67,.12)"
+      willChange: "transform,width",
+      backfaceVisibility: "hidden",
+      background: "linear-gradient(180deg, rgba(255,255,255,.56) 0%, rgba(255,255,255,.22) 100%)",
+      backdropFilter: "blur(12px) brightness(1.12) saturate(1.75)",
+      WebkitBackdropFilter: "blur(12px) brightness(1.12) saturate(1.75)",
+      boxShadow: ["inset 0 1px 1px rgba(255,255,255,.86)", "inset 0 -1px 1px rgba(255,255,255,.18)", "0 2px 8px rgba(60,60,67,.12)"].join(","),
+      border: "0.75px solid rgba(255,255,255,.78)"
     }
   }), tabs.map((t, i) => {
-    const on = active === i;
+    const on = shown === i;
     return /*#__PURE__*/React.createElement("button", {
       key: t,
+      className: "lg-tab",
       onClick: () => tap(t, i),
       "aria-label": t,
-      "aria-current": on ? "page" : undefined,
+      "aria-current": active === i ? "page" : undefined,
       style: {
         position: "relative",
-        zIndex: 2,
         flex: 1,
-        minWidth: 0,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 1,
-        margin: 0,
-        padding: "2px 0 1px",
-        borderRadius: 27,
-        background: "transparent",
-        border: "0.75px solid transparent",
-        boxShadow: "none",
-        color: on ? accent : "rgba(24,24,27,.70)",
-        WebkitTapHighlightColor: "transparent",
-        transition: "color .22s ease, transform .16s ease"
+        gap: 3,
+        background: "none",
+        border: "none",
+        padding: 0,
+        WebkitTapHighlightColor: "transparent"
       }
     }, /*#__PURE__*/React.createElement("span", {
+      className: "lg-ico",
       style: {
-        display: "flex",
-        height: 29,
-        alignItems: "center",
-        justifyContent: "center",
-        transform: on ? "translateY(-1px)" : "none",
-        transition: "transform .15s ease"
+        display: "block",
+        transform: on ? "scale(1.12)" : "scale(1)",
+        transition: "transform .32s cubic-bezier(.32,1.34,.48,1)"
       }
     }, /*#__PURE__*/React.createElement(Icon, {
       name: t,
       active: on
     })), /*#__PURE__*/React.createElement("span", {
       style: {
-        maxWidth: "100%",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        fontSize: 10.5,
-        lineHeight: 1.1,
-        letterSpacing: .05,
+        fontSize: 12.5,
+        lineHeight: 1,
+        letterSpacing: .2,
         color: on ? accent : "rgba(24,24,27,.70)",
-        fontWeight: on ? 600 : 500,
-        transition: "color .22s ease"
+        fontWeight: 700,
+        textShadow: "none",
+        transition: "color .25s ease"
       }
     }, t));
-  })));
+  }))));
 };
 
 /* ---------- seed / migration ---------- */
@@ -1738,6 +1843,17 @@ function App() {
 
   /* ---- house goal projection ---- */
   const houseNow = st.networth.filter(a => a.house).reduce((s, a) => s + num(a.bal), 0);
+  const graduationMonth = mKey(S.graduationDate);
+  const studentLoanPayoff = S.graduationDate ? (st.studentLoans || []).reduce((sum, loan) => {
+    const principal = Math.max(0, num(loan.bal));
+    const annualRate = Math.max(0, num(loan.rate)) / 100;
+    const asOfMs = new Date(`${loan.asOf || today()}T12:00:00`).getTime();
+    const gradMs = new Date(`${S.graduationDate}T12:00:00`).getTime();
+    const days = Number.isFinite(asOfMs) && Number.isFinite(gradMs)
+      ? Math.max(0, (gradMs - asOfMs) / 86400000)
+      : 0;
+    return sum + principal + principal * annualRate * days / 365.25;
+  }, 0) : 0;
   const gRate = Math.pow(1 + num(S.growth), 1 / 12) - 1;
   const projection = () => {
     const rows = [];
@@ -1747,20 +1863,25 @@ function App() {
     for (let i = 0; i < 72; i++) {
       const base = num(S.plannedSave);
       const monthly = k >= moveK ? base + num(S.moveSaves) : base;
-      const ev = st.events.filter(e => mKey(e.month) === k).reduce((s, e) => s + num(e.amt), 0);
+      const manualEvents = st.events.filter(e => mKey(e.month) === k).reduce((s, e) => s + num(e.amt), 0);
+      const loanPayoff = studentLoanPayoff > 0 && graduationMonth === k ? -studentLoanPayoff : 0;
+      const ev = manualEvents + loanPayoff;
       if (i > 0) bal = bal * (1 + gRate) + Math.max(0, monthly) + ev;
+      else bal += ev;
       rows.push({
         k,
         bal,
-        ev
+        ev,
+        loanPayoff
       });
-      if (bal >= num(S.goal)) break;
+      const loanPayoffStillAhead = studentLoanPayoff > 0 && graduationMonth && k < graduationMonth;
+      if (bal >= num(S.goal) && !loanPayoffStillAhead) break;
       k = addMonths(k, 1);
     }
     return rows;
   };
   const proj = projection();
-  const hit = proj.find(r => r.bal >= num(S.goal));
+  const hit = proj.find(r => r.bal >= num(S.goal) && !(studentLoanPayoff > 0 && graduationMonth && r.k < graduationMonth));
   const debtTotal = st.debts.reduce((s, d) => s + num(d.bal), 0);
   const subsMonthly = st.subs.reduce((s, x) => s + num(x.cost) / ({
     Monthly: 1,
@@ -3154,8 +3275,6 @@ function App() {
   const Loans = () => {
     const loans = st.studentLoans || [];
     const gradDate = S.graduationDate || "";
-    const termYears = Math.max(1, num(S.loanTermYears) || 10);
-    const graceMonths = 6;
 
     const dateMs = s => {
       if (!s) return null;
@@ -3176,20 +3295,10 @@ function App() {
       const daysToGrad = gradDate ? daysBetween(asOf, gradDate) : 0;
       const interestToGrad = principal * annualRate * daysToGrad / 365.25;
       const atGrad = principal + interestToGrad;
-      const graceDays = graceMonths * 30.4375;
-      const interestGrace = principal * annualRate * graceDays / 365.25;
-      const atRepayment = atGrad + interestGrace;
-      const months = termYears * 12;
-      const monthlyRate = annualRate / 12;
-      const payment = months <= 0 ? 0 : monthlyRate > 0
-        ? atRepayment * monthlyRate / (1 - Math.pow(1 + monthlyRate, -months))
-        : atRepayment / months;
       return {
         principal,
         interestToGrad,
-        atGrad,
-        atRepayment,
-        payment
+        atGrad
       };
     };
     const totals = loans.reduce((a, l) => {
@@ -3197,15 +3306,11 @@ function App() {
       a.principal += p.principal;
       a.interestToGrad += p.interestToGrad;
       a.atGrad += p.atGrad;
-      a.atRepayment += p.atRepayment;
-      a.payment += p.payment;
       return a;
     }, {
       principal: 0,
       interestToGrad: 0,
-      atGrad: 0,
-      atRepayment: 0,
-      payment: 0
+      atGrad: 0
     });
 
     const updateLoan = (id, patch) => setSt(x => ({
@@ -3255,7 +3360,7 @@ function App() {
         style: {
           color: "#B9CFC6"
         }
-      }, "Unsubsidized loans accrue interest while you are in school. These are planning estimates based on each loan's balance, APR and balance-as-of date.")),
+      }, "Unsubsidized loans accrue interest while you are in school. Money HQ assumes you will pay the full projected balance as soon as you graduate.")),
 
       /*#__PURE__*/React.createElement(Card, null,
         /*#__PURE__*/React.createElement("div", {
@@ -3274,32 +3379,7 @@ function App() {
               graduationDate: e.target.value
             })
           })
-        ), /*#__PURE__*/React.createElement("div", {
-          className: "flex items-center justify-between gap-3"
-        }, /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("div", {
-            className: "text-sm",
-            style: {
-              color: C.ink
-            }
-          }, "Repayment term"),
-          /*#__PURE__*/React.createElement("div", {
-            className: "text-xs",
-            style: {
-              color: C.soft
-            }
-          }, "standard estimate after graduation")
-        ), /*#__PURE__*/React.createElement(NumStep, {
-          value: termYears,
-          step: 1,
-          min: 1,
-          max: 30,
-          suffix: " yr",
-          w: 42,
-          onChange: v => setSetup({
-            loanTermYears: v
-          })
-        }))),
+        )),
         gradDate ? /*#__PURE__*/React.createElement("div", {
           className: "grid grid-cols-2 gap-2 mt-3"
         }, /*#__PURE__*/React.createElement(Stat, {
@@ -3307,14 +3387,9 @@ function App() {
           value: money0(totals.interestToGrad),
           tone: totals.interestToGrad > 0 ? "warn" : undefined
         }), /*#__PURE__*/React.createElement(Stat, {
-          label: "Balance at graduation",
-          value: money0(totals.atGrad)
-        }), /*#__PURE__*/React.createElement(Stat, {
-          label: "After 6-mo grace",
-          value: money0(totals.atRepayment)
-        }), /*#__PURE__*/React.createElement(Stat, {
-          label: `Est. ${termYears}-yr payment`,
-          value: money0(totals.payment) + "/mo"
+          label: "Payoff at graduation",
+          value: money0(totals.atGrad),
+          tone: "warn"
         })) : /*#__PURE__*/React.createElement("div", {
           className: "text-xs mt-3",
           style: {
@@ -3401,7 +3476,7 @@ function App() {
         style: {
           color: C.soft
         }
-      }, "Projected at graduation: ", money0(loanProjection(l).atGrad), " · est. payment: ", money0(loanProjection(l).payment), "/mo")
+      }, "Payoff at graduation: ", money0(loanProjection(l).atGrad), " · includes ", money0(loanProjection(l).interestToGrad), " accrued interest")
       )),
       /*#__PURE__*/React.createElement(Btn, {
         style: {
@@ -3470,6 +3545,11 @@ function App() {
       value: money0(saved),
       sub: saved < num(S.plannedSave) ? "behind plan" : "ahead of plan",
       tone: saved < 0 ? "bad" : saved < num(S.plannedSave) ? "warn" : "good"
+    }), studentLoanPayoff > 0 && /*#__PURE__*/React.createElement(Stat, {
+      label: "Loan payoff at graduation",
+      value: "−" + money0(studentLoanPayoff),
+      sub: "deducted " + monthLabel(graduationMonth),
+      tone: "warn"
     })), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
       className: "flex items-center justify-between mb-2"
     }, /*#__PURE__*/React.createElement("span", {
@@ -3561,8 +3641,8 @@ function App() {
       style: {
         padding: 8
       }
-    }, proj.filter((_, i) => i % 3 === 0 || proj.length < 14).slice(0, 18).map(r => {
-      const w = num(S.goal) ? Math.min(100, r.bal / num(S.goal) * 100) : 0;
+    }, proj.filter((r, i) => i % 3 === 0 || proj.length < 14 || r.loanPayoff).slice(0, 18).map(r => {
+      const w = num(S.goal) ? Math.max(0, Math.min(100, r.bal / num(S.goal) * 100)) : 0;
       return /*#__PURE__*/React.createElement("div", {
         key: r.k,
         className: "px-1 py-1"
@@ -3579,9 +3659,9 @@ function App() {
         }
       }, money0(r.bal), r.ev ? /*#__PURE__*/React.createElement("span", {
         style: {
-          color: C.green
+          color: r.ev < 0 ? C.red : C.green
         }
-      }, " +", money0(r.ev)) : null)), /*#__PURE__*/React.createElement("div", {
+      }, r.ev < 0 ? " −" : " +", money0(Math.abs(r.ev)), r.loanPayoff ? " loan payoff" : "") : null)), /*#__PURE__*/React.createElement("div", {
         className: "w-full rounded-full mt-1",
         style: {
           height: 4,
@@ -3695,7 +3775,7 @@ function App() {
       background: C.bg,
       color: C.ink,
       ...FONT,
-      paddingBottom: "calc(94px + env(safe-area-inset-bottom, 0px))"
+      paddingBottom: "calc(106px + env(safe-area-inset-bottom, 0px))"
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "px-4 pt-6 max-w-2xl mx-auto"
