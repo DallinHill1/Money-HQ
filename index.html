@@ -1267,7 +1267,7 @@ const haptic = kind => {
     }));else if (navigator.vibrate) navigator.vibrate(kind === "select" ? 9 : 4);
   } catch (e) {}
 };
-const TABS = ["Home", "Activity", "Income", "Plan", "Loans", "Goal"];
+const TABS = ["Home", "Activity", "Income", "Plan", "Goal"];
 /* hide the web tab bar only when the native shell says it has its own */
 const __NATIVE_SHELL__ = typeof window !== "undefined" && !!window.__HIDE_WEB_NAV__;
 const GlassNav = ({
@@ -1843,17 +1843,6 @@ function App() {
 
   /* ---- house goal projection ---- */
   const houseNow = st.networth.filter(a => a.house).reduce((s, a) => s + num(a.bal), 0);
-  const graduationMonth = mKey(S.graduationDate);
-  const studentLoanPayoff = S.graduationDate ? (st.studentLoans || []).reduce((sum, loan) => {
-    const principal = Math.max(0, num(loan.bal));
-    const annualRate = Math.max(0, num(loan.rate)) / 100;
-    const asOfMs = new Date(`${loan.asOf || today()}T12:00:00`).getTime();
-    const gradMs = new Date(`${S.graduationDate}T12:00:00`).getTime();
-    const days = Number.isFinite(asOfMs) && Number.isFinite(gradMs)
-      ? Math.max(0, (gradMs - asOfMs) / 86400000)
-      : 0;
-    return sum + principal + principal * annualRate * days / 365.25;
-  }, 0) : 0;
   const gRate = Math.pow(1 + num(S.growth), 1 / 12) - 1;
   const projection = () => {
     const rows = [];
@@ -1862,26 +1851,22 @@ function App() {
     const moveK = mKey(S.moveMonth);
     for (let i = 0; i < 72; i++) {
       const base = num(S.plannedSave);
-      const monthly = k >= moveK ? base + num(S.moveSaves) : base;
-      const manualEvents = st.events.filter(e => mKey(e.month) === k).reduce((s, e) => s + num(e.amt), 0);
-      const loanPayoff = studentLoanPayoff > 0 && graduationMonth === k ? -studentLoanPayoff : 0;
-      const ev = manualEvents + loanPayoff;
+      const monthly = moveK && k >= moveK ? base + num(S.moveSaves) : base;
+      const ev = st.events.filter(e => mKey(e.month) === k).reduce((s, e) => s + num(e.amt), 0);
       if (i > 0) bal = bal * (1 + gRate) + Math.max(0, monthly) + ev;
       else bal += ev;
       rows.push({
         k,
         bal,
-        ev,
-        loanPayoff
+        ev
       });
-      const loanPayoffStillAhead = studentLoanPayoff > 0 && graduationMonth && k < graduationMonth;
-      if (bal >= num(S.goal) && !loanPayoffStillAhead) break;
+      if (bal >= num(S.goal)) break;
       k = addMonths(k, 1);
     }
     return rows;
   };
   const proj = projection();
-  const hit = proj.find(r => r.bal >= num(S.goal) && !(studentLoanPayoff > 0 && graduationMonth && r.k < graduationMonth));
+  const hit = proj.find(r => r.bal >= num(S.goal));
   const debtTotal = st.debts.reduce((s, d) => s + num(d.bal), 0);
   const subsMonthly = st.subs.reduce((s, x) => s + num(x.cost) / ({
     Monthly: 1,
@@ -3545,11 +3530,6 @@ function App() {
       value: money0(saved),
       sub: saved < num(S.plannedSave) ? "behind plan" : "ahead of plan",
       tone: saved < 0 ? "bad" : saved < num(S.plannedSave) ? "warn" : "good"
-    }), studentLoanPayoff > 0 && /*#__PURE__*/React.createElement(Stat, {
-      label: "Loan payoff at graduation",
-      value: "−" + money0(studentLoanPayoff),
-      sub: "deducted " + monthLabel(graduationMonth),
-      tone: "warn"
     })), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
       className: "flex items-center justify-between mb-2"
     }, /*#__PURE__*/React.createElement("span", {
@@ -3605,6 +3585,32 @@ function App() {
         plannedSave: v
       })
     })), /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center justify-between gap-3 mb-2"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "min-w-0"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "text-sm",
+      style: {
+        color: C.ink
+      }
+    }, "Move-in date"), /*#__PURE__*/React.createElement("div", {
+      className: "text-xs",
+      style: {
+        color: C.soft
+      }
+    }, "when freed-up rent begins")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 156,
+        maxWidth: "55%",
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement(Input, {
+      type: "date",
+      value: S.moveMonth || "",
+      onChange: e => setSetup({
+        moveMonth: e.target.value
+      })
+    }))), /*#__PURE__*/React.createElement("div", {
       className: "flex items-center justify-between"
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       className: "text-sm",
@@ -3637,11 +3643,11 @@ function App() {
       style: {
         color: C.soft
       }
-    }, money0(num(S.plannedSave)), "/mo, ", money0(num(S.plannedSave) + num(S.moveSaves)), " after ", shortMonth(mKey(S.moveMonth)))), /*#__PURE__*/React.createElement(Card, {
+    }, S.moveMonth ? money0(num(S.plannedSave)) + "/mo, " + money0(num(S.plannedSave) + num(S.moveSaves)) + " after " + shortMonth(mKey(S.moveMonth)) : money0(num(S.plannedSave)) + "/mo · set move-in date above")), /*#__PURE__*/React.createElement(Card, {
       style: {
         padding: 8
       }
-    }, proj.filter((r, i) => i % 3 === 0 || proj.length < 14 || r.loanPayoff).slice(0, 18).map(r => {
+    }, proj.filter((_, i) => i % 3 === 0 || proj.length < 14).slice(0, 18).map(r => {
       const w = num(S.goal) ? Math.max(0, Math.min(100, r.bal / num(S.goal) * 100)) : 0;
       return /*#__PURE__*/React.createElement("div", {
         key: r.k,
@@ -3661,7 +3667,7 @@ function App() {
         style: {
           color: r.ev < 0 ? C.red : C.green
         }
-      }, r.ev < 0 ? " −" : " +", money0(Math.abs(r.ev)), r.loanPayoff ? " loan payoff" : "") : null)), /*#__PURE__*/React.createElement("div", {
+      }, r.ev < 0 ? " −" : " +", money0(Math.abs(r.ev))) : null)), /*#__PURE__*/React.createElement("div", {
         className: "w-full rounded-full mt-1",
         style: {
           height: 4,
@@ -3735,7 +3741,12 @@ function App() {
       style: {
         padding: 8
       }
-    }, st.events.sort((a, b) => (a.month || "").localeCompare(b.month || "")).map(e => /*#__PURE__*/React.createElement("div", {
+    }, st.events.length === 0 && /*#__PURE__*/React.createElement("div", {
+      className: "text-sm text-center py-4",
+      style: {
+        color: C.soft
+      }
+    }, "No one-time events yet."), [...st.events].sort((a, b) => (a.month || "").localeCompare(b.month || "")).map(e => /*#__PURE__*/React.createElement("div", {
       key: e.id,
       className: "flex items-center gap-2 px-1 py-2",
       style: {
@@ -3760,11 +3771,63 @@ function App() {
         ...NUM
       }
     }, num(e.amt) < 0 ? "" : "+", money0(num(e.amt))), /*#__PURE__*/React.createElement("button", {
+      "aria-label": "Edit " + e.name,
+      onClick: () => {
+        const name = prompt("Event name?", e.name || "One-time event");
+        if (!name) return;
+        const eventDate = prompt("Event date (YYYY-MM-DD)?", e.month || today());
+        if (!eventDate) return;
+        const rawAmount = prompt("Amount? Use a negative number for money going out.", String(e.amt || 0));
+        if (rawAmount == null) return;
+        const amount = Number(String(rawAmount).replace(/[$,]/g, ""));
+        if (!Number.isFinite(amount) || amount === 0) {
+          alert("Enter a non-zero amount. Use a minus sign for money going out.");
+          return;
+        }
+        upList("events", e.id, {
+          name,
+          month: eventDate,
+          amt: amount
+        });
+      },
+      style: {
+        color: C.green,
+        padding: 6
+      }
+    }, "✎"), /*#__PURE__*/React.createElement("button", {
       onClick: () => delFrom("events", e.id),
       style: {
-        color: C.soft
+        color: C.soft,
+        padding: 6
       }
-    }, "✕")))), /*#__PURE__*/React.createElement("div", {
+    }, "✕"))), /*#__PURE__*/React.createElement(Btn, {
+      tone: "ghost",
+      small: true,
+      style: {
+        marginTop: 8,
+        width: "100%",
+        color: C.green,
+        borderColor: C.green
+      },
+      onClick: () => {
+        const name = prompt("Event name?", "One-time event");
+        if (!name) return;
+        const eventDate = prompt("Event date (YYYY-MM-DD)?", S.moveMonth || today());
+        if (!eventDate) return;
+        const rawAmount = prompt("Amount? Use a negative number for money going out.", "-1000");
+        if (rawAmount == null) return;
+        const amount = Number(String(rawAmount).replace(/[$,]/g, ""));
+        if (!Number.isFinite(amount) || amount === 0) {
+          alert("Enter a non-zero amount. Use a minus sign for money going out.");
+          return;
+        }
+        addTo("events", {
+          name,
+          month: eventDate,
+          amt: amount
+        });
+      }
+    }, "+ Add one-time event")), /*#__PURE__*/React.createElement("div", {
       className: "mb-6"
     }));
   };
@@ -3779,7 +3842,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "px-4 pt-6 max-w-2xl mx-auto"
-  }, tab === "Home" && Home(), tab === "Activity" && Spending(), tab === "Income" && Income(), tab === "Plan" && Plan(), tab === "Loans" && Loans(), tab === "Goal" && Goal()), !__NATIVE_SHELL__ && /*#__PURE__*/React.createElement(GlassNav, {
+  }, tab === "Home" && Home(), tab === "Activity" && Spending(), tab === "Income" && Income(), tab === "Plan" && Plan(), tab === "Goal" && Goal()), !__NATIVE_SHELL__ && /*#__PURE__*/React.createElement(GlassNav, {
     tabs: tabs,
     active: tabs.indexOf(tab),
     Icon: Icon,
