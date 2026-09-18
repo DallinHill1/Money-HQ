@@ -355,7 +355,15 @@ if ("serviceWorker" in navigator) {
       m.style.cssText='font-size:11px;color:#5B4A55;background:rgba(255,255,255,.94);padding:6px 9px;border-radius:10px;margin-bottom:6px;max-width:220px;box-shadow:0 3px 12px rgba(0,0,0,.08)';
       el.appendChild(m);
     }
-    el.appendChild(button(connected ? (busy?'Syncing…':'↻ Sync bank') : (busy?'Opening…':'＋ Connect bank'), connected ? sync : connect, false));
+    if (connected) {
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;gap:6px;justify-content:flex-end;';
+      row.appendChild(button(busy?'Working…':'＋ Account', connect, true));
+      row.appendChild(button(busy?'Syncing…':'↻ Sync', sync, false));
+      el.appendChild(row);
+    } else {
+      el.appendChild(button(busy?'Opening…':'＋ Connect bank', connect, false));
+    }
   }
   async function jfetch(url, options){
     const r=await fetch(url,{headers:{'Content-Type':'application/json',...(options&&options.headers||{})},...options});
@@ -1572,6 +1580,7 @@ function App() {
         const incomingTx = Array.isArray(payload.tx) ? payload.tx : [];
         const incomingIncome = Array.isArray(payload.income) ? payload.income : [];
         const incomingAccounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+        const incomingDebts = Array.isArray(payload.debts) ? payload.debts : [];
         const removedIds = new Set(Array.isArray(payload.removed) ? payload.removed : []);
 
         // Plaid sync can return a transaction again after it changes. Replace matching
@@ -1597,8 +1606,8 @@ function App() {
         // when Plaid finds church donations. Existing users may have saved state
         // from before this category existed, so this is a tiny data migration.
         let mergedBudget = prev.budget || [];
-        if (incomingTx.some(t => t && t.cat === 'Tithing') && !mergedBudget.some(b => b.cat === 'Tithing')) {
-          mergedBudget = [...mergedBudget, { id: uid(), cat: 'Tithing', group: 'Giving', amt: 0, note: '' }];
+        if (!mergedBudget.some(b => b.cat === 'Tithing')) {
+          mergedBudget = [...mergedBudget, { id: uid(), cat: 'Tithing', group: 'Giving', amt: 0, note: 'Automatically 10% of income' }];
         }
 
         // Income is stored separately from spending. Plaid income rows represent the
@@ -1625,20 +1634,36 @@ function App() {
         const normalizedAccounts = incomingAccounts.map(a => {
           const plaidAccountId = a.plaidAccountId || a.account_id || null;
           const balance = a.bal ?? a.current ?? a.balance ?? (a.balances && (a.balances.current ?? a.balances.available)) ?? 0;
+          const acct = a.acct || a.name || a.official_name || "Linked bank account";
+          const goalText = `${acct} ${a.institution || ""} ${a.cat || ""}`.toLowerCase();
+          const countsTowardGoal = !!a.house || /fidelity/.test(goalText) || /12\s*(?:month|mo).*add(?:-|\s)?on/.test(goalText);
           return {
             ...a,
             plaidAccountId,
-            acct: a.acct || a.name || a.official_name || "Linked bank account",
+            acct,
             cat: a.cat || a.subtype || a.type || "Linked account",
             bal: num(balance),
             asOf: a.asOf || today(),
-            house: !!a.house,
+            house: countsTowardGoal,
             note: a.note || "Synced from Plaid",
             id: a.id || uid()
           };
         });
+
+        const normalizedDebts = incomingDebts.map(d => ({
+          ...d,
+          plaidAccountId: d.plaidAccountId || d.account_id || null,
+          name: d.name || d.acct || d.official_name || "Linked credit card",
+          bal: num(d.bal ?? d.current ?? d.balance ?? (d.balances && d.balances.current) ?? 0),
+          asOf: d.asOf || today(),
+          id: d.id || uid()
+        }));
+
         const incomingAccountIds = new Set(normalizedAccounts.map(a => a.plaidAccountId).filter(Boolean));
-        const keptNetworth = (prev.networth || []).filter(a => !a.plaidAccountId || !incomingAccountIds.has(a.plaidAccountId));
+        const incomingDebtIds = new Set(normalizedDebts.map(d => d.plaidAccountId).filter(Boolean));
+        const linkedIdsThisSync = new Set([...incomingAccountIds, ...incomingDebtIds]);
+        const keptNetworth = (prev.networth || []).filter(a => !a.plaidAccountId || !linkedIdsThisSync.has(a.plaidAccountId));
+        const keptDebts = (prev.debts || []).filter(d => !d.plaidAccountId || !linkedIdsThisSync.has(d.plaidAccountId));
 
         return {
           ...prev,
@@ -1646,11 +1671,13 @@ function App() {
           income: mergedIncome,
           budget: mergedBudget,
           networth: [...keptNetworth, ...normalizedAccounts],
+          debts: [...keptDebts, ...normalizedDebts],
           bankSync: {
             ...(prev.bankSync || {}),
             connected: true,
             lastSync: payload.syncedAt || new Date().toISOString(),
-            institution: payload.institution || (prev.bankSync && prev.bankSync.institution) || "Bank"
+            institution: payload.institution || (prev.bankSync && prev.bankSync.institution) || "Bank",
+            itemCount: payload.itemCount || (prev.bankSync && prev.bankSync.itemCount) || 1
           }
         };
       });
@@ -1719,8 +1746,9 @@ function App() {
     : (num(i.hrs) * num(i.rate) + num(i.extra)) * (1 - num(S.dedRate));
   const net = inMonth(st.income).reduce((s, i) => s + incomeReceived(i), 0);
   const gross = net; // Bank feeds expose the posted take-home deposit, not payroll gross.
+  const tithingBudget = Math.max(0, net * 0.10);
   const saved = net - spent;
-  const budgetTotal = st.budget.filter(b => !["Transfer", "One-Time"].includes(b.group)).reduce((s, b) => s + num(b.amt), 0);
+  const budgetTotal = st.budget.filter(b => !["Transfer", "One-Time"].includes(b.group)).reduce((s, b) => s + (b.cat === "Tithing" ? tithingBudget : num(b.amt)), 0);
   const catSpend = c => mtx.filter(t => t.cat === c).reduce((s, t) => s + num(t.amt), 0);
   const catSpendPrev = c => st.tx.filter(t => mKey(t.date) === addMonths(month, -1) && t.cat === c).reduce((s, t) => s + num(t.amt), 0);
   const cardRow = card => {
@@ -2724,7 +2752,7 @@ function App() {
           behavior: "smooth"
         });
       }
-    }, "Import statement")), imp && /*#__PURE__*/React.createElement(ImportPanel, null), editTx && /*#__PURE__*/React.createElement(TxForm, null), rows.length === 0 && /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
+    }, "Import statement")), imp && /*#__PURE__*/React.createElement(ImportPanel, null), editTx && !editTx.id && /*#__PURE__*/React.createElement(TxForm, null), rows.length === 0 && /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
       className: "text-sm text-center py-6",
       style: {
         color: C.soft
@@ -2733,15 +2761,12 @@ function App() {
       style: {
         padding: 6
       }
-    }, rows.map(t => /*#__PURE__*/React.createElement("button", {
-      key: t.id,
+    }, rows.map(t => /*#__PURE__*/React.createElement(React.Fragment, {
+      key: t.id
+    }, /*#__PURE__*/React.createElement("button", {
       onClick: () => {
         setEditTx({
           ...t
-        });
-        window.scrollTo({
-          top: 0,
-          behavior: "smooth"
         });
       },
       className: "flex items-center gap-3 w-full px-2 py-2 text-left",
@@ -2766,7 +2791,9 @@ function App() {
         color: EXCLUDE.includes(t.cat) ? C.soft : C.ink,
         ...NUM
       }
-    }, money(num(t.amt)))))), /*#__PURE__*/React.createElement("div", {
+    }, money(num(t.amt)))), editTx && editTx.id === t.id && /*#__PURE__*/React.createElement("div", {
+      className: "px-1 py-2"
+    }, /*#__PURE__*/React.createElement(TxForm, null))))), /*#__PURE__*/React.createElement("div", {
       className: "text-xs mb-6",
       style: {
         color: C.soft
@@ -2936,7 +2963,15 @@ function App() {
       style: {
         color: C.soft
       }
-    }, b.group)), /*#__PURE__*/React.createElement(NumStep, {
+    }, b.group, b.cat === "Tithing" ? " · 10% of income" : "")), b.cat === "Tithing" ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 72,
+        textAlign: "right",
+        fontWeight: 700,
+        color: C.green,
+        ...NUM
+      }
+    }, money0(tithingBudget)) : /*#__PURE__*/React.createElement(NumStep, {
       value: b.amt,
       step: 10,
       min: 0,
@@ -2947,12 +2982,16 @@ function App() {
       })
     }), /*#__PURE__*/React.createElement("button", {
       onClick: () => {
+        if (b.cat === "Tithing") {
+          alert("Tithing is automatically set to 10% of income received for the selected month.");
+          return;
+        }
         if (confirm("Remove " + b.cat + " from the budget?")) delFrom("budget", b.id);
       },
       style: {
         color: C.soft
       }
-    }, "✕"))), /*#__PURE__*/React.createElement(Btn, {
+    }, b.cat === "Tithing" ? "10%" : "✕"))), /*#__PURE__*/React.createElement(Btn, {
       tone: "ghost",
       small: true,
       style: {
