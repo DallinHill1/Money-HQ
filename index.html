@@ -812,7 +812,7 @@ const FONT = {
 const NUM = {
   fontVariantNumeric: "tabular-nums"
 };
-const EXCLUDE = ["Card Payment", "Transfer", "Car Purchase (One-Time)"]; // transfers/card payoffs are not spending
+const EXCLUDE = ["Card Payment", "Transfer", "Car Purchase (One-Time)", "--"]; // transfers/card payoffs are not spending
 const CARDS = [];
 const PAY = ["Checking", "Cash"];
 const WHO = ["Joint", "Person 1", "Person 2"];
@@ -1593,11 +1593,26 @@ function App() {
         incomingTx.forEach(t => {
           if (!t || !t.plaidId) return;
           const old = byPlaidId.get(t.plaidId);
-          byPlaidId.set(t.plaidId, {
+          const merged = {
             ...(old || {}),
             ...t,
             id: old && old.id ? old.id : uid()
-          });
+          };
+
+          // A user correction always wins over Plaid's automatic categorization.
+          // This keeps "--" and any other manual transaction edits sticky.
+          if (old && old.userEdited) {
+            merged.date = old.date;
+            merged.amt = old.amt;
+            merged.cat = old.cat;
+            merged.who = old.who;
+            merged.desc = old.desc;
+            merged.pay = old.pay;
+            merged.note = old.note;
+            merged.userEdited = true;
+          }
+
+          byPlaidId.set(t.plaidId, merged);
         });
         const manualTx = (prev.tx || []).filter(t => !t.plaidId);
         const mergedTx = [...manualTx, ...byPlaidId.values()];
@@ -2235,7 +2250,7 @@ function App() {
     const [text, setText] = useState("");
     const [rows, setRows] = useState(null);
     const [flip, setFlip] = useState(false);
-    const cats = st.budget.map(b => b.cat);
+    const cats = ["--", ...st.budget.map(b => b.cat).filter(c => c !== "--")];
     const isCard = CARDS.includes(pay);
 
     // learned merchant -> category map from everything already logged
@@ -2580,7 +2595,7 @@ function App() {
   /* ================= SPENDING ================= */
   const TxForm = () => {
     const [f, setF] = useState(editTx);
-    const cats = st.budget.map(b => b.cat);
+    const cats = ["--", ...st.budget.map(b => b.cat).filter(c => c !== "--")];
     return /*#__PURE__*/React.createElement(Card, {
       style: {
         border: `2px solid ${C.green}`
@@ -2678,7 +2693,10 @@ function App() {
           alert("Add a date and an amount.");
           return;
         }
-        if (f.id) upList("tx", f.id, row);else addTo("tx", row);
+        if (f.id) upList("tx", f.id, {
+          ...row,
+          userEdited: true
+        });else addTo("tx", row);
         setMonth(mKey(row.date));
         setEditTx(null);
       }

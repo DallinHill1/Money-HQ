@@ -4,7 +4,7 @@ import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } fro
 
 const { Pool } = pg;
 const app = express();
-const CLASSIFICATION_VERSION = 3;
+const CLASSIFICATION_VERSION = 4;
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('.'));
@@ -415,6 +415,16 @@ const appCategory = (
   // User rule: Walmart is always groceries, regardless of Plaid's category.
   if (/\bwalmart\b/.test(name)) {
     return 'Groceries';
+  }
+
+  // Household utility rules.
+  if (/enbridge|rockymtn pacific|rocky mountain power|rockymtn power|rocky mtn power/.test(name)) {
+    return 'Utilities (Phone, Internet, Electric)';
+  }
+
+  // Golf spending is personal/fun money.
+  if (/\bgolf\b|golf course|golfnow|driving range|topgolf|top golf/.test(name)) {
+    return 'Fun Money';
   }
 
   if (isChurchTithing(t)) {
