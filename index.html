@@ -781,9 +781,10 @@ const SEED = {
     "rateD":0,"rateH":0,"hoursDsummer":0,"hoursDschool":0,"hoursHsummer":0,"hoursHschool":0,
     "schoolStarts":"","dedRate":0,"startMonth":"2026-09-01","goal":0,"growth":0,"moveMonth":"",
     "moveSaves":0,"k401pct":0,"matchPct":0,"hsaEmp":0,"hsaEmployer":0,"k401base":0,"hsaBase":0,
-    "baseAsOf":"","plannedNet":0,"plannedSave":0
+    "baseAsOf":"","plannedNet":0,"plannedSave":0,"graduationDate":"","loanTermYears":10
   },
   "debts": [],
+  "studentLoans": [],
   "sinking": [],
   "subs": [],
   "networth": [],
@@ -890,6 +891,10 @@ const Input = p => /*#__PURE__*/React.createElement("input", {
     border: `1px solid ${C.line}`,
     background: "#fff",
     color: C.ink,
+    minWidth: 0,
+    maxWidth: "100%",
+    width: "100%",
+    boxSizing: "border-box",
     ...NUM,
     ...p.style
   }
@@ -1215,6 +1220,15 @@ const Icon = ({
     }), /*#__PURE__*/React.createElement("path", {
       d: "M9.5 9.5h5"
     })),
+    Loans: /*#__PURE__*/React.createElement("g", p, /*#__PURE__*/React.createElement("path", {
+      d: "M4 7.5h16v11H4z"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M7 7.5V5h10v2.5"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M8 12h8"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M8 15h5"
+    })),
     Goal: /*#__PURE__*/React.createElement("g", p, /*#__PURE__*/React.createElement("circle", {
       cx: "12",
       cy: "12",
@@ -1248,7 +1262,7 @@ const haptic = kind => {
     }));else if (navigator.vibrate) navigator.vibrate(kind === "select" ? 9 : 4);
   } catch (e) {}
 };
-const TABS = ["Home", "Activity", "Income", "Plan", "Goal"];
+const TABS = ["Home", "Activity", "Income", "Plan", "Loans", "Goal"];
 /* hide the web tab bar only when the native shell says it has its own */
 const __NATIVE_SHELL__ = typeof window !== "undefined" && !!window.__HIDE_WEB_NAV__;
 const GlassNav = ({
@@ -1498,6 +1512,10 @@ const fresh = () => ({
     ...x,
     id: uid()
   })),
+  studentLoans: (SEED.studentLoans || []).map(x => ({
+    ...x,
+    id: uid()
+  })),
   sinking: SEED.sinking.map(x => ({
     ...x,
     id: uid()
@@ -1668,11 +1686,43 @@ function App() {
         const normalizedDebts = incomingDebts.map(d => ({
           ...d,
           plaidAccountId: d.plaidAccountId || d.account_id || null,
-          name: d.name || d.acct || d.official_name || "Linked credit card",
+          name: d.name || d.acct || d.official_name || "Linked debt",
           bal: num(d.bal ?? d.current ?? d.balance ?? (d.balances && d.balances.current) ?? 0),
           asOf: d.asOf || today(),
+          type: d.type || "",
+          subtype: d.subtype || "",
+          mask: d.mask || "",
           id: d.id || uid()
         }));
+
+        // If Plaid exposes a recognizable student-loan account, prefill the Loans page.
+        // Manual edits remain authoritative.
+        const studentLoanByPlaidId = new Map();
+        (prev.studentLoans || []).forEach(l => {
+          if (l.plaidAccountId) studentLoanByPlaidId.set(l.plaidAccountId, l);
+        });
+        normalizedDebts
+          .filter(d => {
+            const text = `${d.name || ""} ${d.institution || ""} ${d.subtype || ""}`.toLowerCase();
+            return d.type === "loan" && /student|education|nelnet|mohela|aidvantage|edfinancial/.test(text);
+          })
+          .forEach(d => {
+            const old = studentLoanByPlaidId.get(d.plaidAccountId);
+            if (old && old.userEdited) return;
+            studentLoanByPlaidId.set(d.plaidAccountId, {
+              ...(old || {}),
+              id: old && old.id ? old.id : uid(),
+              plaidAccountId: d.plaidAccountId,
+              name: d.name,
+              owner: old && old.owner ? old.owner : "Joint",
+              bal: d.bal,
+              rate: old && old.rate != null ? old.rate : 0,
+              asOf: d.asOf || today(),
+              linked: true
+            });
+          });
+        const manualStudentLoans = (prev.studentLoans || []).filter(l => !l.plaidAccountId);
+        const mergedStudentLoans = [...manualStudentLoans, ...studentLoanByPlaidId.values()];
 
         const incomingAccountIds = new Set(normalizedAccounts.map(a => a.plaidAccountId).filter(Boolean));
         const incomingDebtIds = new Set(normalizedDebts.map(d => d.plaidAccountId).filter(Boolean));
@@ -1687,6 +1737,7 @@ function App() {
           budget: mergedBudget,
           networth: [...keptNetworth, ...normalizedAccounts],
           debts: [...keptDebts, ...normalizedDebts],
+          studentLoans: mergedStudentLoans,
           bankSync: {
             ...(prev.bankSync || {}),
             connected: true,
@@ -1766,15 +1817,21 @@ function App() {
   const budgetTotal = st.budget.filter(b => !["Transfer", "One-Time"].includes(b.group)).reduce((s, b) => s + (b.cat === "Tithing" ? tithingBudget : num(b.amt)), 0);
   const catSpend = c => mtx.filter(t => t.cat === c).reduce((s, t) => s + num(t.amt), 0);
   const catSpendPrev = c => st.tx.filter(t => mKey(t.date) === addMonths(month, -1) && t.cat === c).reduce((s, t) => s + num(t.amt), 0);
-  const cardRow = card => {
-    const charged = mtx.filter(t => t.pay === card && !EXCLUDE.includes(t.cat)).reduce((s, t) => s + num(t.amt), 0);
-    const paid = mtx.filter(t => t.pay === card && t.cat === "Card Payment").reduce((s, t) => s + num(t.amt), 0);
-    const d = st.debts.find(x => x.name.toLowerCase().includes(card.split(" ")[0].toLowerCase()));
+  const creditCards = (st.debts || []).filter(d => {
+    const text = `${d.name || ""} ${d.institution || ""} ${d.mask || ""}`.toLowerCase();
+    return d.type === "credit" || /discover|credit card|visa|mastercard|4321/.test(text);
+  });
+  const cardRow = d => {
+    const charged = mtx.filter(t => {
+      if (EXCLUDE.includes(t.cat)) return false;
+      if (d.plaidAccountId && t.plaidAccountId) return d.plaidAccountId === t.plaidAccountId;
+      return (t.pay || "").toLowerCase().includes((d.mask || "").toLowerCase()) ||
+        (d.name || "").toLowerCase().includes((t.pay || "").toLowerCase());
+    }).reduce((s, t) => s + num(t.amt), 0);
     return {
-      card,
+      card: d.name,
       charged,
-      paid,
-      owed: d ? num(d.bal) : 0
+      owed: num(d.bal)
     };
   };
   const monthsWithData = [...new Set([...st.tx.map(t => mKey(t.date)), ...st.income.map(i => mKey(i.week || i.date)), month])].sort();
@@ -2205,12 +2262,10 @@ function App() {
       className: "w-20 text-right"
     }, "charged"), /*#__PURE__*/React.createElement("div", {
       className: "w-20 text-right"
-    }, "paid"), /*#__PURE__*/React.createElement("div", {
-      className: "w-20 text-right"
-    }, "owed now")), CARDS.map(c => {
+    }, "owed now")), creditCards.map(c => {
       const r = cardRow(c);
       return /*#__PURE__*/React.createElement("div", {
-        key: c,
+        key: c.id || c.plaidAccountId || c.name,
         className: "flex items-center px-1 py-2",
         style: {
           borderTop: `1px solid ${C.line}`
@@ -2227,12 +2282,6 @@ function App() {
           ...NUM
         }
       }, money(r.charged)), /*#__PURE__*/React.createElement("div", {
-        className: "w-20 text-right text-sm",
-        style: {
-          color: C.soft,
-          ...NUM
-        }
-      }, money(r.paid)), /*#__PURE__*/React.createElement("div", {
         className: "w-20 text-right text-sm font-bold",
         style: {
           color: r.owed > 0 ? C.red : C.green,
@@ -2612,6 +2661,12 @@ function App() {
     }, /*#__PURE__*/React.createElement(Label, null, "Date"), /*#__PURE__*/React.createElement(Input, {
       type: "date",
       value: f.date,
+      style: {
+        minWidth: 0,
+        maxWidth: "100%",
+        width: "100%",
+        boxSizing: "border-box"
+      },
       onChange: e => setF({
         ...f,
         date: e.target.value
@@ -3195,6 +3250,269 @@ function App() {
     }, "+ subscription")))
   }));
 
+  /* ================= STUDENT LOANS ================= */
+  const Loans = () => {
+    const loans = st.studentLoans || [];
+    const gradDate = S.graduationDate || "";
+    const termYears = Math.max(1, num(S.loanTermYears) || 10);
+    const graceMonths = 6;
+
+    const dateMs = s => {
+      if (!s) return null;
+      const d = new Date(`${s}T12:00:00`);
+      const ms = d.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    };
+    const daysBetween = (a, b) => {
+      const am = dateMs(a);
+      const bm = dateMs(b);
+      if (am == null || bm == null) return 0;
+      return Math.max(0, (bm - am) / 86400000);
+    };
+    const loanProjection = l => {
+      const principal = Math.max(0, num(l.bal));
+      const annualRate = Math.max(0, num(l.rate)) / 100;
+      const asOf = l.asOf || today();
+      const daysToGrad = gradDate ? daysBetween(asOf, gradDate) : 0;
+      const interestToGrad = principal * annualRate * daysToGrad / 365.25;
+      const atGrad = principal + interestToGrad;
+      const graceDays = graceMonths * 30.4375;
+      const interestGrace = principal * annualRate * graceDays / 365.25;
+      const atRepayment = atGrad + interestGrace;
+      const months = termYears * 12;
+      const monthlyRate = annualRate / 12;
+      const payment = months <= 0 ? 0 : monthlyRate > 0
+        ? atRepayment * monthlyRate / (1 - Math.pow(1 + monthlyRate, -months))
+        : atRepayment / months;
+      return {
+        principal,
+        interestToGrad,
+        atGrad,
+        atRepayment,
+        payment
+      };
+    };
+    const totals = loans.reduce((a, l) => {
+      const p = loanProjection(l);
+      a.principal += p.principal;
+      a.interestToGrad += p.interestToGrad;
+      a.atGrad += p.atGrad;
+      a.atRepayment += p.atRepayment;
+      a.payment += p.payment;
+      return a;
+    }, {
+      principal: 0,
+      interestToGrad: 0,
+      atGrad: 0,
+      atRepayment: 0,
+      payment: 0
+    });
+
+    const updateLoan = (id, patch) => setSt(x => ({
+      ...x,
+      studentLoans: (x.studentLoans || []).map(l => l.id === id ? {
+        ...l,
+        ...patch,
+        userEdited: true
+      } : l)
+    }));
+    const deleteLoan = id => setSt(x => ({
+      ...x,
+      studentLoans: (x.studentLoans || []).filter(l => l.id !== id)
+    }));
+    const addLoan = () => setSt(x => ({
+      ...x,
+      studentLoans: [...(x.studentLoans || []), {
+        id: uid(),
+        name: "Student Loan",
+        owner: "Joint",
+        bal: 0,
+        rate: 0,
+        asOf: today(),
+        userEdited: true
+      }]
+    }));
+
+    return /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement(Card, {
+        style: {
+          background: C.ledger,
+          border: "none"
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "text-xs",
+        style: {
+          color: "#B9CFC6"
+        }
+      }, "STUDENT LOANS"), /*#__PURE__*/React.createElement("div", {
+        className: "text-2xl font-bold mt-1",
+        style: {
+          color: "#fff",
+          ...NUM
+        }
+      }, money0(totals.principal)), /*#__PURE__*/React.createElement("div", {
+        className: "text-xs mt-2",
+        style: {
+          color: "#B9CFC6"
+        }
+      }, "Unsubsidized loans accrue interest while you are in school. These are planning estimates based on each loan's balance, APR and balance-as-of date.")),
+
+      /*#__PURE__*/React.createElement(Card, null,
+        /*#__PURE__*/React.createElement("div", {
+          className: "grid grid-cols-1 gap-3"
+        }, /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement(Label, null, "Expected graduation date"),
+          /*#__PURE__*/React.createElement(Input, {
+            type: "date",
+            value: gradDate,
+            style: {
+              minWidth: 0,
+              maxWidth: "100%",
+              boxSizing: "border-box"
+            },
+            onChange: e => setSetup({
+              graduationDate: e.target.value
+            })
+          })
+        ), /*#__PURE__*/React.createElement("div", {
+          className: "flex items-center justify-between gap-3"
+        }, /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", {
+            className: "text-sm",
+            style: {
+              color: C.ink
+            }
+          }, "Repayment term"),
+          /*#__PURE__*/React.createElement("div", {
+            className: "text-xs",
+            style: {
+              color: C.soft
+            }
+          }, "standard estimate after graduation")
+        ), /*#__PURE__*/React.createElement(NumStep, {
+          value: termYears,
+          step: 1,
+          min: 1,
+          max: 30,
+          suffix: " yr",
+          w: 42,
+          onChange: v => setSetup({
+            loanTermYears: v
+          })
+        }))),
+        gradDate ? /*#__PURE__*/React.createElement("div", {
+          className: "grid grid-cols-2 gap-2 mt-3"
+        }, /*#__PURE__*/React.createElement(Stat, {
+          label: "Interest by graduation",
+          value: money0(totals.interestToGrad),
+          tone: totals.interestToGrad > 0 ? "warn" : undefined
+        }), /*#__PURE__*/React.createElement(Stat, {
+          label: "Balance at graduation",
+          value: money0(totals.atGrad)
+        }), /*#__PURE__*/React.createElement(Stat, {
+          label: "After 6-mo grace",
+          value: money0(totals.atRepayment)
+        }), /*#__PURE__*/React.createElement(Stat, {
+          label: `Est. ${termYears}-yr payment`,
+          value: money0(totals.payment) + "/mo"
+        })) : /*#__PURE__*/React.createElement("div", {
+          className: "text-xs mt-3",
+          style: {
+            color: C.soft
+          }
+        }, "Set your expected graduation date to project accrued interest and your estimated payment.")
+      ),
+
+      loans.map(l => /*#__PURE__*/React.createElement(Card, {
+        key: l.id,
+        style: {
+          padding: 12
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "flex items-center justify-between gap-2 mb-2"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "text-sm font-bold",
+        style: {
+          color: C.ink
+        }
+      }, l.linked ? "Linked student loan" : "Student loan"), /*#__PURE__*/React.createElement("button", {
+        onClick: () => {
+          if (confirm("Remove this student loan from the planner?")) deleteLoan(l.id);
+        },
+        style: {
+          color: C.soft
+        }
+      }, "✕")),
+      /*#__PURE__*/React.createElement("div", {
+        className: "grid grid-cols-1 gap-2"
+      }, /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement(Label, null, "Loan / servicer"),
+        /*#__PURE__*/React.createElement(Input, {
+          value: l.name || "",
+          onChange: e => updateLoan(l.id, {
+            name: e.target.value
+          })
+        })
+      ), /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement(Label, null, "Whose loan"),
+        /*#__PURE__*/React.createElement(Input, {
+          value: l.owner || "",
+          onChange: e => updateLoan(l.id, {
+            owner: e.target.value
+          })
+        })
+      ), /*#__PURE__*/React.createElement("div", {
+        className: "grid grid-cols-2 gap-2"
+      }, /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement(Label, null, "Current balance"),
+        /*#__PURE__*/React.createElement(Input, {
+          inputMode: "decimal",
+          value: l.bal,
+          onChange: e => updateLoan(l.id, {
+            bal: e.target.value.replace(/[^0-9.]/g, "")
+          })
+        })
+      ), /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement(Label, null, "APR %"),
+        /*#__PURE__*/React.createElement(Input, {
+          inputMode: "decimal",
+          value: l.rate,
+          onChange: e => updateLoan(l.id, {
+            rate: e.target.value.replace(/[^0-9.]/g, "")
+          })
+        })
+      )), /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement(Label, null, "Balance as of"),
+        /*#__PURE__*/React.createElement(Input, {
+          type: "date",
+          value: l.asOf || today(),
+          style: {
+            minWidth: 0,
+            maxWidth: "100%",
+            boxSizing: "border-box"
+          },
+          onChange: e => updateLoan(l.id, {
+            asOf: e.target.value
+          })
+        })
+      )),
+      gradDate && /*#__PURE__*/React.createElement("div", {
+        className: "text-xs mt-3",
+        style: {
+          color: C.soft
+        }
+      }, "Projected at graduation: ", money0(loanProjection(l).atGrad), " · est. payment: ", money0(loanProjection(l).payment), "/mo")
+      )),
+      /*#__PURE__*/React.createElement(Btn, {
+        style: {
+          width: "100%",
+          marginBottom: 18
+        },
+        onClick: addLoan
+      }, "+ Add student loan")
+    );
+  };
+
   /* ================= GOAL ================= */
   const Goal = () => {
     const p = num(S.goal) ? Math.min(100, houseNow / num(S.goal) * 100) : 0;
@@ -3481,7 +3799,7 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "px-4 pt-6 max-w-2xl mx-auto"
-  }, tab === "Home" && Home(), tab === "Activity" && Spending(), tab === "Income" && Income(), tab === "Plan" && Plan(), tab === "Goal" && Goal()), !__NATIVE_SHELL__ && /*#__PURE__*/React.createElement(GlassNav, {
+  }, tab === "Home" && Home(), tab === "Activity" && Spending(), tab === "Income" && Income(), tab === "Plan" && Plan(), tab === "Loans" && Loans(), tab === "Goal" && Goal()), !__NATIVE_SHELL__ && /*#__PURE__*/React.createElement(GlassNav, {
     tabs: tabs,
     active: tabs.indexOf(tab),
     Icon: Icon,

@@ -4,7 +4,7 @@ import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } fro
 
 const { Pool } = pg;
 const app = express();
-const CLASSIFICATION_VERSION = 4;
+const CLASSIFICATION_VERSION = 5;
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('.'));
@@ -328,10 +328,14 @@ function isChurchTithing(t) {
     .test(name);
 }
 
+function isVenmo(t) {
+  return /\bvenmo\b/.test(transactionText(t));
+}
+
 function isVenmoRent(t) {
   return (
     Number(t.amount || 0) >= 1000 &&
-    /\bvenmo\b/.test(transactionText(t))
+    isVenmo(t)
   );
 }
 
@@ -344,13 +348,17 @@ function isCreditCardPayment(
     return false;
   }
 
+  // A positive transaction whose SOURCE account is a credit card is a charge
+  // on that card, not a payoff. This keeps every purchase from card 4321 visible.
+  const sourceMeta = accountMetaById[t.account_id] || {};
+  if (sourceMeta.type === 'credit') {
+    return false;
+  }
+
   const { detailed } = financeCategory(t);
   const name = transactionText(t);
 
-  if (
-    /\b4321\b/.test(name) ||
-    /\bdiscover\b/.test(name)
-  ) {
+  if (/\bdiscover\b/.test(name)) {
     return true;
   }
 
@@ -435,7 +443,17 @@ const appCategory = (
     return 'Rent';
   }
 
+  // All other outgoing Venmo payments stay visible. They can be corrected
+  // manually if needed; incoming Venmo is added separately as a non-spending transfer.
+  if (isVenmo(t)) {
+    return 'Household Misc';
+  }
+
+  const sourceMeta = accountMetaById[t.account_id] || {};
+  const sourceIsCreditCard = sourceMeta.type === 'credit';
+
   if (
+    !sourceIsCreditCard &&
     isCreditCardPayment(
       t,
       allPosted,
@@ -445,7 +463,10 @@ const appCategory = (
     return 'Card Payment';
   }
 
-  if (isInternalAccountTransfer(t, allPosted)) {
+  if (
+    !sourceIsCreditCard &&
+    isInternalAccountTransfer(t, allPosted)
+  ) {
     return 'Transfer';
   }
 
@@ -506,6 +527,7 @@ function txToMoneyHQ(
 ) {
   return {
     plaidId: t.transaction_id,
+    plaidAccountId: t.account_id,
     date: t.date,
     amt: Math.round(Number(t.amount) * 100) / 100,
     cat: appCategory(
@@ -529,6 +551,10 @@ function isIncomeTransaction(
   t,
   allPosted
 ) {
+  if (isVenmo(t)) {
+    return false;
+  }
+
   const { primary, detailed } = financeCategory(t);
 
   if (
@@ -771,7 +797,7 @@ app.post(
       const accountNameById =
         Object.fromEntries(
           [...accountMap.entries()].map(
-            ([id, a]) => [id, a.name || a.official_name || 'Account']
+            ([id, a]) => [id, accountLabel(a)]
           )
         );
 
@@ -795,6 +821,13 @@ app.post(
             )
         );
 
+      const venmoIncoming =
+        changedPosted.filter(
+          t =>
+            Number(t.amount) < 0 &&
+            isVenmo(t)
+        );
+
       const classifiedOutgoing =
         spend.map(t => ({
           raw: t,
@@ -814,7 +847,7 @@ app.post(
             x.app.cat === 'Card Payment'
         );
 
-      const tx =
+      const outgoingTx =
         classifiedOutgoing
           .filter(
             x =>
@@ -822,6 +855,20 @@ app.post(
               x.app.cat !== 'Card Payment'
           )
           .map(x => x.app);
+
+      const venmoInTx =
+        venmoIncoming.map(t => ({
+          ...txToMoneyHQ(
+            t,
+            accountNameById,
+            changedPosted,
+            accountMetaById
+          ),
+          cat: 'Transfer',
+          note: 'Venmo money in'
+        }));
+
+      const tx = [...outgoingTx, ...venmoInTx];
 
       const income =
         incomePosted.map(
@@ -878,6 +925,9 @@ app.post(
             name: accountLabel(a),
             bal: Math.max(0, accountBalance(a)),
             institution: a._institution || 'Bank',
+            type: a.type || '',
+            subtype: a.subtype || '',
+            mask: a.mask || '',
             note: 'Synced from Plaid'
           }));
 
@@ -915,8 +965,8 @@ app.post(
       console.log(
         `[Plaid] Sync complete: ${items.length} items, ${linkedAccounts.length} accounts, ` +
         `${tx.length} spending rows, ${excludedOutgoing.length} transfers/card payments hidden, ` +
-        `${income.length} income deposits, ${debts.length} debt accounts, ` +
-        `${assets.filter(a => a.house).length} goal accounts`
+        `${income.length} income deposits, ${venmoIncoming.length} Venmo incoming, ` +
+        `${debts.length} debt accounts, ${assets.filter(a => a.house).length} goal accounts`
       );
     } catch (e) {
       console.error(
