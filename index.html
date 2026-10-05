@@ -846,7 +846,7 @@ const FONT = {
 const NUM = {
   fontVariantNumeric: "tabular-nums"
 };
-const EXCLUDE = ["Card Payment", "Transfer", "Car Purchase (One-Time)", "--"]; // transfers/card payoffs are not spending
+const EXCLUDE = ["Card Payment", "Transfer", "Car Purchase (One-Time)", "--", "Tithing"]; // Tithing is tracked separately from spending.
 const CARDS = [];
 const PAY = ["Checking", "Cash"];
 const WHO = ["Joint", "Person 1", "Person 2"];
@@ -1574,7 +1574,8 @@ function App() {
   const [editTx, setEditTx] = useState(null);
   const [imp, setImp] = useState(null); // statement import panel
   const [openSec, setOpenSec] = useState({
-    budget: true
+    budget: true,
+    tithing: true
   });
   const timer = useRef(null);
   const ready = useRef(false);
@@ -1842,7 +1843,8 @@ function App() {
   const gross = net; // Bank feeds expose the posted take-home deposit, not payroll gross.
   const tithingBudget = Math.max(0, net * 0.10);
   const saved = net - spent;
-  const budgetTotal = st.budget.filter(b => !["Transfer", "One-Time"].includes(b.group)).reduce((s, b) => s + (b.cat === "Tithing" ? tithingBudget : num(b.amt)), 0);
+  const monthlyBudget = st.budget.filter(b => b.cat !== "Tithing" && !["Transfer", "One-Time"].includes(b.group));
+  const budgetTotal = monthlyBudget.reduce((s, b) => s + num(b.amt), 0);
   const catSpend = c => mtx.filter(t => t.cat === c).reduce((s, t) => s + num(t.amt), 0);
   const catSpendPrev = c => st.tx.filter(t => mKey(t.date) === addMonths(month, -1) && t.cat === c).reduce((s, t) => s + num(t.amt), 0);
   const creditCards = (st.debts || []).filter(d => {
@@ -2224,7 +2226,7 @@ function App() {
         padding: 8,
         borderRadius: 22
       }
-    }, st.budget.filter(b => !["Transfer", "One-Time"].includes(b.group)).filter(b => num(b.amt) > 0 || catSpend(b.cat) > 0).map(b => {
+    }, monthlyBudget.filter(b => num(b.amt) > 0 || catSpend(b.cat) > 0).map(b => {
       const sp = catSpend(b.cat),
         bud = num(b.amt),
         rem = bud - sp;
@@ -2900,7 +2902,7 @@ function App() {
       style: {
         color: C.soft
       }
-    }, "Card payments and one-time purchases are logged but left out of the spending totals — they're transfers, not new spending."));
+    }, "Tithing is tracked separately and excluded from spending totals. Card payments, transfers, and one-time car purchases are also excluded."));
   };
 
   /* ================= INCOME ================= */
@@ -3047,7 +3049,7 @@ function App() {
       style: {
         padding: 8
       }
-    }, st.budget.map(b => /*#__PURE__*/React.createElement("div", {
+    }, st.budget.filter(b => b.cat !== "Tithing").map(b => /*#__PURE__*/React.createElement("div", {
       key: b.id,
       className: "flex items-center gap-2 px-1 py-2",
       style: {
@@ -3065,15 +3067,7 @@ function App() {
       style: {
         color: C.soft
       }
-    }, b.group, b.cat === "Tithing" ? " · 10% of income" : "")), b.cat === "Tithing" ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        width: 72,
-        textAlign: "right",
-        fontWeight: 700,
-        color: C.green,
-        ...NUM
-      }
-    }, money0(tithingBudget)) : /*#__PURE__*/React.createElement(NumStep, {
+    }, b.group)), /*#__PURE__*/React.createElement(NumStep, {
       value: b.amt,
       step: 10,
       min: 0,
@@ -3084,16 +3078,12 @@ function App() {
       })
     }), /*#__PURE__*/React.createElement("button", {
       onClick: () => {
-        if (b.cat === "Tithing") {
-          alert("Tithing is automatically set to 10% of income received for the selected month.");
-          return;
-        }
         if (confirm("Remove " + b.cat + " from the budget?")) delFrom("budget", b.id);
       },
       style: {
         color: C.soft
       }
-    }, b.cat === "Tithing" ? "10%" : "✕"))), /*#__PURE__*/React.createElement(Btn, {
+    }, "✕"))), /*#__PURE__*/React.createElement(Btn, {
       tone: "ghost",
       small: true,
       style: {
@@ -3110,6 +3100,18 @@ function App() {
         });
       }
     }, "+ category")))
+  }), Section({
+    id: "tithing",
+    title: "Tithing",
+    right: money0(catSpend("Tithing")) + " paid",
+    children: /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
+      className: "flex justify-between mb-2"
+    }, /*#__PURE__*/React.createElement("span", null, "10% of income"), /*#__PURE__*/React.createElement("strong", null, money0(tithingBudget))), /*#__PURE__*/React.createElement("div", {
+      className: "flex justify-between mb-2"
+    }, /*#__PURE__*/React.createElement("span", null, "Paid this month"), /*#__PURE__*/React.createElement("strong", null, money0(catSpend("Tithing")))), /*#__PURE__*/React.createElement("div", {
+      className: "text-xs",
+      style: { color: C.soft }
+    }, "Tracked separately from the monthly budget and spending totals."))
   }), Section({
     id: "debts",
     title: "Debts & card balances",
