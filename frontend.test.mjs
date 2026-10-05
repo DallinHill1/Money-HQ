@@ -4,10 +4,15 @@ import assert from 'node:assert/strict';
 
 const html=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 const tick=ms=>new Promise(r=>setTimeout(r,ms));
-async function mount({failRead=false,failSave=false,state=null}={}){
+async function mount({failRead=false,failSave=false,state=null,now='2026-10-05T12:00:00'}={}){
   const writes=[],errors=[];let version=0;
   const console=new VirtualConsole();console.on('jsdomError',e=>errors.push(e.message));
   const dom=new JSDOM(html,{url:'https://moneyhq.example',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console,beforeParse(w){
+    const RealDate=w.Date;
+    w.Date=class extends RealDate {
+      constructor(...args){super(...(args.length ? args : [now]));}
+      static now(){return new RealDate(now).getTime();}
+    };
     w.scrollTo=()=>{};
     w.fetch=async(path,options={})=>{
       let data,status=200;
@@ -30,6 +35,8 @@ let result=await mount();
 assert.equal(result.errors.length,0,result.errors.join('\n'));
 assert.equal(result.writes.length,1);
 assert.equal(result.writes[0].setup.goal,0);assert.deepEqual(result.writes[0].tx,[]);
+assert.equal(result.writes[0].setup.startMonth,'2026-10-01');
+assert.ok(result.dom.window.document.body.textContent.includes('October 2026'));
 const fixture=structuredClone(result.writes[0]);
 assert.ok(!result.dom.window.document.body.textContent.includes('Another user private transaction'));
 assert.equal(result.dom.window.document.getElementById('account-email').textContent,'test@example.com');
@@ -45,7 +52,7 @@ fixture.setup.startMonth='2026-09-01';
 fixture.budget=[{id:'groceries',cat:'Groceries',group:'Food',amt:1000},{id:'tithing',cat:'Tithing',group:'Giving',amt:9999},{id:'transfer',cat:'Transfer',group:'Transfer',amt:700}];
 fixture.income=[{id:'income',week:'2026-09-01',amount:1000}];
 fixture.tx=[{id:'purchase',date:'2026-09-02',cat:'Groceries',amt:150,desc:'Groceries'},{id:'tithe',date:'2026-09-02',cat:'Tithing',amt:200,desc:'Church donation'},{id:'old-tithe',date:'2026-08-02',cat:'Tithing',amt:300},{id:'transfer',date:'2026-09-02',cat:'Transfer',amt:700}];
-result=await mount({state:fixture});
+result=await mount({state:fixture,now:'2026-09-30T12:00:00'});
 assert.equal(result.errors.length,0,result.errors.join('\n'));
 let doc=result.dom.window.document;
 assert.match(doc.body.textContent,/Income \$1,000\s*·\s*Spent \$150/);
@@ -68,5 +75,24 @@ assert.match(tithingSection.textContent,/Paid this month\$200/);
 assert.deepEqual(result.writes[0].tx,fixture.tx);
 assert.deepEqual(result.writes[0].budget,fixture.budget);
 result.dom.window.close();
+
+// Loading an older saved budget opens this month, without changing its goal date.
+result=await mount({state:fixture});
+doc=result.dom.window.document;
+assert.ok(doc.body.textContent.includes('October 2026'));
+assert.match(doc.body.textContent,/Spent \$0/);
+assert.equal(result.writes[0].setup.startMonth,'2026-09-01');
+Array.from(doc.querySelectorAll('button')).find(b=>b.textContent==='‹').click();await tick(30);
+assert.ok(doc.body.textContent.includes('September 2026'));
+assert.match(doc.body.textContent,/Spent \$150/);
+Array.from(doc.querySelectorAll('button')).find(b=>b.textContent==='›').click();await tick(30);
+assert.ok(doc.body.textContent.includes('October 2026'));
+result.dom.window.close();
+for(const [now,label] of [['2026-12-31T23:30:00','December 2026'],['2027-01-01T00:30:00','January 2027']]){
+  result=await mount({state:fixture,now});
+  assert.ok(result.dom.window.document.body.textContent.includes(label));
+  result.dom.window.close();
+}
 console.log('PASS: app renders, blank accounts ignore old browser cache, server saves work, saved data does not trigger unload warnings, failed reads do not overwrite data, conflicting saves stop further editing.');
 console.log('PASS: tithing remains separate from monthly budgets, spending totals and weekly charts while its target, payments and saved records stay visible.');
+console.log('PASS: current-month defaults work for new and existing accounts across month/year boundaries; past-month navigation and saved goal dates are preserved.');

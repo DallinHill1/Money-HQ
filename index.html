@@ -1529,6 +1529,10 @@ const GlassNav = ({
 const SEED_V = 2;
 const fresh = () => ({
   ...JSON.parse(JSON.stringify(SEED)),
+  setup: {
+    ...SEED.setup,
+    startMonth: `${mKey(today())}-01`
+  },
   tx: SEED.tx.map(t => ({
     ...t,
     id: uid()
@@ -1570,7 +1574,7 @@ const fresh = () => ({
 function App() {
   const [st, setSt] = useState(null);
   const [tab, setTab] = useState(typeof window !== "undefined" && window.__INITIAL_TAB__ || "Home");
-  const [month, setMonth] = useState(mKey(SEED.setup.startMonth));
+  const [month, setMonth] = useState(() => mKey(today()));
   const [editTx, setEditTx] = useState(null);
   const [imp, setImp] = useState(null); // statement import panel
   const [openSec, setOpenSec] = useState({
