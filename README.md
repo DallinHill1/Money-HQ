@@ -11,6 +11,12 @@ Use the existing PostgreSQL database and existing Plaid settings. No new service
 paid authentication provider is required. Commit this project's files to the branch
 that Railway deploys, and keep the start command `npm start`.
 
+The existing Railway workspace is on Free, with Serverless enabled for the app
+and PostgreSQL. The app closes idle database clients after ten seconds and retries
+temporary startup connection failures while PostgreSQL wakes. Free includes only
+$1 of monthly resource credit; usage above that can stop services. Sleeping reduces
+idle costs but does not guarantee all projects fit within that allowance.
+
 Required environment settings:
 
 - `DATABASE_URL`: the existing Railway PostgreSQL connection.

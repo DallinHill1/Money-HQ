@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { Script } from 'node:vm';
+import { initializeDatabase } from './db-startup.js';
 
 process.env.NODE_ENV='test';
 process.env.DATABASE_URL='postgres://localhost/test';
@@ -15,7 +16,22 @@ pool.query=async(sql,args)=>{
 };
 await db.exec(`CREATE TABLE plaid_state(id INTEGER PRIMARY KEY,access_token TEXT,item_id TEXT,cursor TEXT,institution TEXT,connected_at TIMESTAMPTZ,last_sync TIMESTAMPTZ,classification_version INTEGER);
 INSERT INTO plaid_state VALUES(1,'legacy-private-token','legacy-private-item',NULL,'Legacy bank',NOW(),NULL,0);`);
-await initDb();await initDb();
+// Reproduce Railway's cold-start connection failure, then perform real migrations.
+let startAttempts=0;
+const delays=[];
+await initializeDatabase(async()=>{
+  startAttempts++;
+  if(startAttempts<3)throw new AggregateError([Object.assign(new Error('database waking'),{code:'ECONNREFUSED'})]);
+  return initDb();
+},{wait:async ms=>delays.push(ms)});
+assert.equal(startAttempts,3);assert.deepEqual(delays,[1000,2000]);
+await assert.rejects(initializeDatabase(async()=>{throw Object.assign(new Error('wrong password'),{code:'28P01'});},
+  {wait:async()=>assert.fail('Authentication errors must not retry')}),/wrong password/);
+let failedAttempts=0;
+await assert.rejects(initializeDatabase(async()=>{failedAttempts++;throw Object.assign(new Error('database unavailable'),{code:'ETIMEDOUT'});},
+  {attempts:3,wait:async()=>{}}),/database unavailable/);
+assert.equal(failedAttempts,3);
+await initDb();
 const server=app.listen(0,'127.0.0.1');
 await new Promise(resolve=>server.once('listening',resolve));
 const origin='http://127.0.0.1:'+server.address().port;
@@ -82,7 +98,7 @@ try {
   assert.equal((await request('/api/state',{session:renewed})).status,401);
   await db.query('UPDATE app_sessions SET expires_at=NOW()-INTERVAL \'1 second\' WHERE user_id=$1',[bob.user.id]);
   assert.equal((await request('/api/state',{session:bob})).status,401);
-  for(const path of ['/server.js','/auth.js','/env.example','/download','/.env','/package.json'])assert.equal((await fetch(origin+path)).status,404);
+  for(const path of ['/server.js','/auth.js','/db-startup.js','/env.example','/download','/.env','/package.json'])assert.equal((await fetch(origin+path)).status,404);
   for(const path of ['/','/login'])assert.equal((await fetch(origin+path)).status,200);
   for(let i=0;i<11;i++)await request('/api/auth/login',{method:'POST',body:{email:'limit@example.test',password:'wrong but long enough'}});
   assert.equal((await request('/api/auth/login',{method:'POST',body:{email:'limit@example.test',password:'wrong but long enough'}})).status,429);

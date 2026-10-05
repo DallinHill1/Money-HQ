@@ -1,6 +1,7 @@
 import express from 'express';
 import pg from 'pg';
 import { initAuthDb, installAuth } from './auth.js';
+import { initializeDatabase } from './db-startup.js';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
 const { Pool } = pg;
@@ -43,6 +44,9 @@ export const pool = new Pool({
     ? { rejectUnauthorized: false }
     : false
 });
+
+// Idle sockets can be closed by the platform. pg discards that client; keep serving.
+pool.on('error', err => console.error('Idle database connection closed:', err.code || 'connection error'));
 
 export async function initDb() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
@@ -1025,7 +1029,9 @@ const port =
     process.env.PORT || 3000
   );
 
-if (process.env.NODE_ENV !== 'test') initDb()
+if (process.env.NODE_ENV !== 'test') initializeDatabase(initDb, {
+  onRetry: (attempt, milliseconds) => console.warn(`Database is waking; retry ${attempt} in ${milliseconds / 1000}s`)
+})
   .then(() =>
     app.listen(
       port,
