@@ -5,11 +5,16 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node auth.integration.test.mjs && node frontend.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.1",
     "pg": "^8.13.1",
     "plaid": "^30.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "jsdom": "^26.1.0"
   }
 }

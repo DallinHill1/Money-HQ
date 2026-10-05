@@ -322,20 +322,34 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
   .sm\:rounded-3xl{border-radius:1.5rem}
 }
 </style>
-<link rel="manifest" href="./manifest.json">
+
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <script>
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function () {
-    navigator.serviceWorker.register("./sw.js").catch(function (e) { console.log("sw", e); });
-  });
-}
+window.__moneySession = null;
+window.moneyFetch = async (url, options={}) => {
+  await window.__sessionReady;
+  const response=await fetch(url,{...options,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':window.__moneySession.csrfToken,'X-MoneyHQ-User':window.__moneySession.user.id,...(options.headers||{})}});
+  const data=await response.json().catch(()=>({}));
+  if(response.status===401){document.getElementById('root')?.replaceChildren();location.replace('/login');}
+  if(!response.ok)throw Object.assign(new Error(data.error||'Unable to contact Money HQ.'),{status:response.status});
+  return data;
+};
+window.__sessionReady = fetch('/api/auth/me',{cache:'no-store',credentials:'same-origin'})
+  .then(async r=>{if(!r.ok)throw new Error('Unable to check your login. Reload to try again.');const x=await r.json();if(!x.user){location.replace('/login');throw new Error('Please sign in.');}window.__moneySession=x;return x;});
+window.__sessionReady.catch(e=>window.addEventListener('DOMContentLoaded',()=>{document.getElementById('save-status').textContent=e.message;}));
+// Prevent an older offline page from retaining financial responses.
+if('serviceWorker' in navigator)navigator.serviceWorker.getRegistrations().then(rs=>Promise.all(rs.map(r=>r.unregister()))).catch(()=>{});
+window.addEventListener('focus',()=>{if(!window.__moneySession)return;fetch('/api/auth/me',{cache:'no-store'}).then(r=>r.json()).then(x=>{if(x.user?.id!==window.__moneySession.user.id){document.getElementById('root')?.replaceChildren();location.replace('/login');}}).catch(()=>{});});
 </script>
 </head>
 <body>
 <div id="bank-feed-toolbar" style="width:100%;background:#F7F4ED;padding-top:env(safe-area-inset-top,0px)">
   <div id="bank-feed-control" style="min-height:52px;padding:8px 16px 4px;max-width:42rem;margin:0 auto;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font-family:Trebuchet MS,Segoe UI,system-ui,sans-serif"></div>
 </div>
+<div id="account-bar" style="max-width:42rem;margin:auto;padding:4px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;color:#65766b">
+  <span id="account-email"></span><button id="sign-out" style="color:#2E5545;font-weight:600">Sign out</button>
+</div>
+<div id="save-status" role="status" style="max-width:42rem;margin:auto;padding:0 16px;font-size:12px;min-height:20px"></div>
 <div id="root"></div>
 <script>
 (function(){
@@ -370,12 +384,7 @@ if ("serviceWorker" in navigator) {
       el.appendChild(button(busy?'Opening…':'＋ Connect bank', connect, false));
     }
   }
-  async function jfetch(url, options){
-    const r=await fetch(url,{headers:{'Content-Type':'application/json',...(options&&options.headers||{})},...options});
-    const data=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(data.error||data.message||('Request failed: '+r.status));
-    return data;
-  }
+  async function jfetch(url, options){ return window.moneyFetch(url,options); }
   async function status(){
     try{
       const x=await jfetch(API+'/status');
@@ -411,15 +420,11 @@ if ("serviceWorker" in navigator) {
     if(busy && !silent)return;
     busy=true; if(!silent)render();
     try{
-      const needsFullBackfill = localStorage.getItem('moneyhq-plaid-full-loaded-v3') !== '1';
+      const needsFullBackfill = true; // Full backfill is recoverable if a previous save failed.
       const data=await jfetch(API+'/sync'+(needsFullBackfill?'?full=1':''),{method:'POST',body:'{}'});
-      if ((data.tx||[]).length > 0 || (data.income||[]).length > 0 || data.transactionsStatus === 'HISTORICAL_UPDATE_COMPLETE') {
-        try { localStorage.setItem('moneyhq-plaid-full-loaded-v3', '1'); } catch(e) {}
-      }
       // Keep the latest successful Plaid payload until React has actually applied it.
       // This makes the handoff reliable even if the bank sync finishes before the app mounts.
       window.__lastBankFeed = data;
-      try { localStorage.setItem('moneyhq-plaid-latest-v1', JSON.stringify(data)); } catch(e) {}
       try { window.dispatchEvent(new CustomEvent('moneyhq-bank-feed', { detail: data })); } catch(e) {}
       connected=true;
       busy=false;
@@ -434,7 +439,7 @@ if ("serviceWorker" in navigator) {
       setTimeout(()=>render(), waiting ? 5000 : 2600);
     }catch(e){ busy=false; render('Sync failed: '+e.message); }
   }
-  window.addEventListener('load',()=>setTimeout(status,250));
+  window.addEventListener('moneyhq-ready',status,{once:true});
 })();
 </script>
 <script>/**
@@ -737,27 +742,50 @@ var d=null!=c&&c.hydratedSources||null,e=!1,f="",g=aj;null!==c&&void 0!==c&&(!0=
 function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmountComponentAtNode=function(a){if(!Vd(a))throw Error(m(40));return a._reactRootContainer?(yb(function(){Wd(null,null,a,!1,function(){a._reactRootContainer=null;a[Ja]=null})}),!0):!1};Q.unstable_batchedUpdates=Tf;Q.unstable_renderSubtreeIntoContainer=function(a,b,c,d){if(!Vd(c))throw Error(m(200));if(null==a||void 0===a._reactInternals)throw Error(m(38));return Wd(a,b,c,!1,d)};Q.version="18.3.1-next-f1338f8080-20240426"});
 })();
 </script>
-<script>const window_storage_shim = {
-  /* If the page is running inside the Expo app, __NATIVE_STORE__ is injected by App.js
-     and persists to the phone's native storage. Otherwise use the browser's localStorage. */
-  get: async k => {
-    const s = window.__NATIVE_STORE__;
-    const v = s ? s.get(k) : localStorage.getItem(k);
-    if (v === null || v === undefined) throw new Error("missing");
-    return {
-      key: k,
-      value: v
-    };
+<script>
+let stateVersion=0, saveQueue=Promise.resolve(), saveConflict=false;
+window.__pendingBudget=null;
+let lastSavedBudget=null;
+const saveStatus=message=>{document.getElementById('save-status').textContent=message;};
+const window_storage_shim = {
+  get: async () => {
+    const result=await window.moneyFetch('/api/state');
+    stateVersion=result.version;
+    lastSavedBudget=result.state ? JSON.stringify(result.state) : null;
+    return {value:result.state ? JSON.stringify(result.state) : null};
   },
-  set: async (k, v) => {
-    const s = window.__NATIVE_STORE__;
-    if (s) s.set(k, v);else localStorage.setItem(k, v);
-    return {
-      key: k,
-      value: v
-    };
+  set: async (_key,value) => {
+    const snapshot=JSON.parse(value);
+    const task=saveQueue.then(async()=>{
+      if(saveConflict)throw new Error('Reload Money HQ to load the latest budget before saving.');
+      saveStatus('Saving…');
+      const result=await window.moneyFetch('/api/state',{method:'PUT',body:JSON.stringify({state:snapshot,version:stateVersion})});
+      stateVersion=result.version;lastSavedBudget=value;saveStatus('Saved');
+    });
+    saveQueue=task.catch(e=>{
+      if(e.status===409){saveConflict=true;document.getElementById('root').inert=true;document.getElementById('bank-feed-toolbar').inert=true;}
+      saveStatus('Not saved: '+e.message);
+      const retry=document.createElement('button');retry.textContent=saveConflict?' Reload latest budget':' Retry save';
+      retry.onclick=()=>saveConflict?location.reload():window.flushBudget().catch(()=>{});
+      document.getElementById('save-status').appendChild(retry);
+    });
+    return task;
   }
 };
+window.flushBudget=async()=>{
+  await saveQueue;
+  if(window.__pendingBudget && JSON.stringify(window.__pendingBudget)!==lastSavedBudget)
+    await window_storage_shim.set('',JSON.stringify(window.__pendingBudget));
+};
+window.__sessionReady.then(session=>{
+  document.getElementById('account-email').textContent=session.user.email;
+  document.getElementById('sign-out').onclick=async()=>{
+    const button=document.getElementById('sign-out');button.disabled=true;
+    try{await window.flushBudget();await window.moneyFetch('/api/auth/logout',{method:'POST',body:'{}'});document.getElementById('root').replaceChildren();window.__pendingBudget=null;window.__lastBankFeed=null;location.replace('/login');}
+    catch(e){saveStatus('Unable to sign out: '+e.message);button.disabled=false;}
+  };
+}).catch(()=>{});
+window.addEventListener('beforeunload',e=>{if(window.__pendingBudget && JSON.stringify(window.__pendingBudget)!==lastSavedBudget){e.preventDefault();e.returnValue='';}});
 const {
   useState,
   useEffect,
@@ -1549,18 +1577,22 @@ function App() {
     budget: true
   });
   const timer = useRef(null);
+  const ready = useRef(false);
   useEffect(() => {
     (async () => {
       try {
         const r = await window_storage_shim.get("moneyhq-v2-blank");
-        setSt(JSON.parse(r.value));
-      } catch {
-        setSt(fresh());
+        setSt(r.value ? JSON.parse(r.value) : fresh());
+      } catch (e) {
+        saveStatus(e.message);
+        const retry=document.createElement('button');retry.textContent=' Reload';retry.onclick=()=>location.reload();document.getElementById('save-status').appendChild(retry);
       }
     })();
   }, []);
   useEffect(() => {
     if (!st) return;
+    window.__pendingBudget=st;
+    if(!ready.current){ready.current=true;window.dispatchEvent(new Event('moneyhq-ready'));}
     clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
       try {
@@ -1568,18 +1600,12 @@ function App() {
       } catch (e) {
         console.error(e);
       }
-    }, 600);
+    }, 400);
+    return () => clearTimeout(timer.current);
   }, [st]);
   useEffect(() => {
     window.__setTab = t => {
       if (TABS.indexOf(t) >= 0) setTab(t);
-    };
-    /* native shell pushes the latest saved data when this screen comes into focus */
-    window.__applyState = j => {
-      try {
-        const d = typeof j === "string" ? JSON.parse(j) : j;
-        if (d && d.recipes || d && d.tx) setSt(d);
-      } catch (e) {}
     };
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({
       t: "tabs",
@@ -1760,9 +1786,6 @@ function App() {
 
     // Recover a sync that completed before React mounted, including across a reload.
     let latest = window.__lastBankFeed || null;
-    if (!latest) {
-      try { latest = JSON.parse(localStorage.getItem('moneyhq-plaid-latest-v1') || 'null'); } catch (e) {}
-    }
     if (latest) applyBankFeed(latest);
 
     return () => window.removeEventListener('moneyhq-bank-feed', onBankFeed);

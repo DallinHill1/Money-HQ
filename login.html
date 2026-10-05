@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#F7F4ED">
+<title>Sign in · Money HQ</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#F7F4ED;color:#1F3A2E;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px}.card{width:100%;max-width:420px;padding:32px;background:#FFFDF9;border:1px solid #E9E3D7;border-radius:24px}h1{margin:0 0 8px;font-size:32px}p{color:#65766b;line-height:1.5}label{display:block;margin-top:20px;font-size:14px;font-weight:600}input{width:100%;border:1px solid #d5dbd3;border-radius:12px;padding:13px;font:inherit;margin-top:7px;background:white}button{font:inherit;cursor:pointer}.primary{width:100%;border:0;background:#2E5545;color:white;padding:14px;border-radius:12px;font-weight:600;margin-top:24px}.switch{border:0;color:#2E5545;background:transparent;width:100%;padding:16px 0 0}.error{color:#a34232;font-size:14px;min-height:20px;margin:16px 0 0}button:disabled{opacity:.6;cursor:wait}.hint{font-size:12px;margin-bottom:0}
+</style>
+</head>
+<body><main class="card">
+<h1>Money HQ</h1>
+<p id="intro">Sign in to your own budget, accounts, and goals.</p>
+<form id="auth-form">
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" required>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" minlength="15" maxlength="128" required>
+<p class="hint" id="hint" hidden>Use at least 15 characters. A passphrase works well.</p>
+<p class="error" id="error" role="alert"></p>
+<button class="primary" id="submit" type="submit">Sign in</button>
+</form>
+<button class="switch" id="switch" type="button">New here? Create an account</button>
+</main><script>
+let mode='login';
+const form=document.getElementById('auth-form');
+const submit=document.getElementById('submit');
+const switchButton=document.getElementById('switch');
+const error=document.getElementById('error');
+switchButton.onclick=()=>{
+  mode=mode==='login'?'register':'login';
+  const register=mode==='register';
+  document.getElementById('intro').textContent=register?'Create an account and start with a fresh budget.':'Sign in to your own budget, accounts, and goals.';
+  submit.textContent=register?'Create account':'Sign in';
+  switchButton.textContent=register?'Already have an account? Sign in':'New here? Create an account';
+  document.getElementById('password').autocomplete=register?'new-password':'current-password';
+  document.getElementById('hint').hidden=!register;
+  error.textContent='';
+};
+form.onsubmit=async event=>{
+  event.preventDefault();error.textContent='';submit.disabled=true;switchButton.disabled=true;
+  try{
+    const response=await fetch('/api/auth/'+mode,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:form.email.value,password:form.password.value})});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||'Unable to sign in.');
+    form.password.value='';location.replace('/');
+  }catch(e){error.textContent=e.message;submit.disabled=false;switchButton.disabled=false;}
+};
+// Login never stores credentials or financial data in browser storage.
+fetch('/api/auth/me',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(x=>{if(x?.user)location.replace('/');}).catch(()=>{});
+</script></body></html>

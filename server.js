@@ -1,13 +1,19 @@
 import express from 'express';
 import pg from 'pg';
+import { initAuthDb, installAuth } from './auth.js';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
 const { Pool } = pg;
-const app = express();
+export const app = express();
 const CLASSIFICATION_VERSION = 5;
 
-app.use(express.json({ limit: '1mb' }));
-app.use(express.static('.'));
+app.use(express.json({ limit: '5mb' }));
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'same-origin');
+  next();
+});
 
 const plaidEnv = (process.env.PLAID_ENV || 'sandbox').toLowerCase();
 
@@ -17,7 +23,7 @@ const basePath = plaidEnv === 'production'
     ? PlaidEnvironments.development
     : PlaidEnvironments.sandbox;
 
-const plaid = new PlaidApi(new Configuration({
+export const plaid = new PlaidApi(new Configuration({
   basePath,
   baseOptions: {
     headers: {
@@ -27,15 +33,20 @@ const plaid = new PlaidApi(new Configuration({
   }
 }));
 
-const pool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: 3,
+  idleTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 15_000,
+  allowExitOnIdle: true,
   ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false
 });
 
-async function initDb() {
-  if (!process.env.DATABASE_URL) return;
+export async function initDb() {
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
+  await initAuthDb(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS plaid_items (
@@ -48,6 +59,10 @@ async function initDb() {
       classification_version INTEGER DEFAULT 0
     )
   `);
+
+  // Old shared connections remain quarantined. Never give them to the first signup.
+  await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES app_users(id)');
+  await pool.query('CREATE INDEX IF NOT EXISTS plaid_items_user ON plaid_items(user_id)');
 
   // Migrate the original one-item schema so the bank that is already connected
   // survives this upgrade to multiple Plaid Items.
@@ -81,23 +96,25 @@ async function initDb() {
   }
 }
 
-async function getItems() {
-  if (!process.env.DATABASE_URL) return [];
+async function getItems(userId) {
+  if (!userId) throw new Error('User is required.');
 
   const r = await pool.query(`
     SELECT *
     FROM plaid_items
+    WHERE user_id=$1
     ORDER BY connected_at ASC NULLS LAST
-  `);
+  `, [userId]);
 
   return r.rows;
 }
 
-async function upsertItem(item) {
-  await pool.query(`
+async function upsertItem(userId, item) {
+  if (!userId) throw new Error('User is required.');
+  const result = await pool.query(`
     INSERT INTO plaid_items
-      (item_id, access_token, institution, cursor, connected_at, last_sync, classification_version)
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
+      (item_id, access_token, institution, cursor, connected_at, last_sync, classification_version, user_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT (item_id) DO UPDATE SET
       access_token=EXCLUDED.access_token,
       institution=COALESCE(EXCLUDED.institution, plaid_items.institution),
@@ -105,6 +122,8 @@ async function upsertItem(item) {
       connected_at=COALESCE(plaid_items.connected_at, EXCLUDED.connected_at),
       last_sync=COALESCE(EXCLUDED.last_sync, plaid_items.last_sync),
       classification_version=COALESCE(EXCLUDED.classification_version, plaid_items.classification_version)
+    WHERE plaid_items.user_id=EXCLUDED.user_id
+    RETURNING item_id
   `, [
     item.item_id,
     item.access_token,
@@ -112,16 +131,18 @@ async function upsertItem(item) {
     item.cursor ?? null,
     item.connected_at || new Date().toISOString(),
     item.last_sync ?? null,
-    item.classification_version ?? 0
+    item.classification_version ?? 0,
+    userId
   ]);
+  if (!result.rowCount) throw new Error('This bank connection cannot be assigned to this account.');
 }
 
-async function updateItem(itemId, patch) {
-  const items = await getItems();
+async function updateItem(userId, itemId, patch) {
+  const items = await getItems(userId);
   const current = items.find(x => x.item_id === itemId);
   if (!current) return;
 
-  await upsertItem({
+  await upsertItem(userId, {
     ...current,
     ...patch,
     item_id: itemId
@@ -170,9 +191,11 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-app.get('/api/plaid/status', async (_req, res) => {
+installAuth(app, pool);
+
+app.get('/api/plaid/status', async (req, res) => {
   try {
-    const items = await getItems();
+    const items = await getItems(req.user.id);
     const institutions = [...new Set(items.map(x => x.institution).filter(Boolean))];
 
     res.json({
@@ -193,7 +216,7 @@ app.get('/api/plaid/status', async (_req, res) => {
   }
 });
 
-app.post('/api/plaid/link-token', async (_req, res) => {
+app.post('/api/plaid/link-token', async (req, res) => {
   const missing = configurationProblems();
 
   if (missing.length) {
@@ -205,7 +228,7 @@ app.post('/api/plaid/link-token', async (_req, res) => {
   try {
     const request = {
       user: {
-        client_user_id: 'money-hq-owner'
+        client_user_id: req.user.id
       },
       client_name: 'Money HQ',
       products: [Products.Transactions],
@@ -245,7 +268,7 @@ app.post('/api/plaid/exchange', async (req, res) => {
       public_token: req.body.public_token
     });
 
-    await upsertItem({
+    await upsertItem(req.user.id, {
       access_token: r.data.access_token,
       item_id: r.data.item_id,
       cursor: null,
@@ -661,7 +684,7 @@ app.post(
   '/api/plaid/sync',
   async (req, res) => {
     try {
-      const items = await getItems();
+      const items = await getItems(req.user.id);
 
       if (!items.length) {
         return res.status(409).json({
@@ -784,7 +807,7 @@ app.post(
           );
         }
 
-        await updateItem(item.item_id, {
+        await updateItem(req.user.id, item.item_id, {
           cursor: itemTransactionsWorked ? (nextCursor || item.cursor || null) : item.cursor,
           last_sync: new Date().toISOString(),
           classification_version: CLASSIFICATION_VERSION
@@ -981,23 +1004,28 @@ app.post(
   }
 );
 
-app.get(
-  '*',
-  (_req, res) =>
-    res.sendFile(
-      new URL(
-        './index.html',
-        import.meta.url
-      ).pathname
-    )
-);
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
+app.get('/login', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(new URL('./login.html', import.meta.url).pathname);
+});
+// Serve only the app, never server source, package files, exports, or environment files.
+app.get(['/', '/index.html'], (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(new URL('./index.html', import.meta.url).pathname);
+});
+app.use((_req, res) => res.status(404).send('Not found'));
+app.use((err, _req, res, _next) => {
+  const status = err.status || 500;
+  res.status(status).json({ error: status < 500 ? err.message : 'Unable to complete the request. Please try again.' });
+});
 
 const port =
   Number(
     process.env.PORT || 3000
   );
 
-initDb()
+if (process.env.NODE_ENV !== 'test') initDb()
   .then(() =>
     app.listen(
       port,
