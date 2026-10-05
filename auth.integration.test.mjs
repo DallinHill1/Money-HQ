@@ -41,7 +41,7 @@ async function request(path,{session,method='GET',body,headers={}}={}){
 }
 const budget=()=>({tx:[],income:[],budget:[],setup:{goal:123},debts:[],studentLoans:[],sinking:[],subs:[],networth:[],events:[]});
 async function register(email){
-  const r=await request('/api/auth/register',{method:'POST',body:{email,password:'A long test passphrase!'}});
+  const r=await request('/api/auth/register',{method:'POST',body:{email,password:'Test-pass!'}});
   assert.equal(r.status,200);assert.match(r.cookie,/HttpOnly/);assert.match(r.cookie,/SameSite=Strict/i);
   return {...r.data,cookie:r.cookie.split(';')[0]};
 }
@@ -68,7 +68,7 @@ try {
   assert.equal((await request('/api/state',{session:alice,method:'PUT',body:{state:other,version:1}})).status,409);
   assert.equal((await request('/api/state',{session:alice,headers:{'X-MoneyHQ-User':bob.user.id}})).status,401);
   assert.equal((await request('/api/state',{session:alice,method:'PUT',body:{state:changed,version:2},headers:{'X-CSRF-Token':''}})).status,403);
-  assert.equal((await request('/api/auth/login',{method:'POST',body:{email:'alice@example.test',password:'A long test passphrase!'},headers:{Origin:'https://attacker.example'}})).status,403);
+  assert.equal((await request('/api/auth/login',{method:'POST',body:{email:'alice@example.test',password:'Test-pass!'},headers:{Origin:'https://attacker.example'}})).status,403);
   assert.equal((await request('/api/auth/login',{method:'POST',body:{email:'alice@example.test',password:'Wrong test password!'}})).status,401);
   let linkUser;
   plaid.linkTokenCreate=async request=>{linkUser=request.user.client_user_id;return {data:{link_token:'test-link'}};};
@@ -89,7 +89,7 @@ try {
   assert.equal((await db.query("SELECT user_id FROM plaid_items WHERE item_id='legacy-private-item'")).rows[0].user_id,null);
   await initDb();
   assert.equal((await request('/api/state',{session:alice})).data.state.setup.goal,999);
-  const logged=await request('/api/auth/login',{session:alice,method:'POST',body:{email:'alice@example.test',password:'A long test passphrase!'}});
+  const logged=await request('/api/auth/login',{session:alice,method:'POST',body:{email:'alice@example.test',password:'Test-pass!'}});
   assert.equal(logged.status,200);
   assert.equal((await request('/api/state',{session:alice})).status,401);
   const renewed={...logged.data,cookie:logged.cookie.split(';')[0]};

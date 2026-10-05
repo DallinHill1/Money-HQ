@@ -112,8 +112,8 @@ export function installAuth(app, pool) {
   function credentials(req) {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = req.body?.password;
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 15 || password.length > 128) {
-      throw Object.assign(new Error('Use a valid email and a password of 15–128 characters.'), { status: 400 });
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 10 || password.length > 128) {
+      throw Object.assign(new Error('Use a valid email and a password of 10–128 characters.'), { status: 400 });
     }
     return { email, password };
   }
