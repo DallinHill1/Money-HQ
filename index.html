@@ -9,9 +9,6 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Money HQ">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%232F6F5E'/%3E%3Ctext x='90' y='125' font-size='96' text-anchor='middle'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%232F6F5E'/%3E%3Ctext x='90' y='125' font-size='96' text-anchor='middle'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E">
-<link rel="manifest" href="data:application/manifest+json,{%22name%22:%20%22Money%20HQ%22,%20%22short_name%22:%20%22Money%20HQ%22,%20%22start_url%22:%20%22.%22,%20%22display%22:%20%22standalone%22,%20%22background_color%22:%20%22%23FBF8F3%22,%20%22theme_color%22:%20%22%232F6F5E%22,%20%22icons%22:%20[{%22src%22:%20%22data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20180%20180'%3E%3Crect%20width='180'%20height='180'%20rx='40'%20fill='%232F6F5E'/%3E%3Ctext%20x='90'%20y='125'%20font-size='96'%20text-anchor='middle'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E%22,%20%22sizes%22:%20%22180x180%22,%20%22type%22:%20%22image/svg+xml%22}]}">
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0;background:#F7F4ED;
@@ -341,6 +338,9 @@ window.__sessionReady.catch(e=>window.addEventListener('DOMContentLoaded',()=>{d
 if('serviceWorker' in navigator)navigator.serviceWorker.getRegistrations().then(rs=>Promise.all(rs.map(r=>r.unregister()))).catch(()=>{});
 window.addEventListener('focus',()=>{if(!window.__moneySession)return;fetch('/api/auth/me',{cache:'no-store'}).then(r=>r.json()).then(x=>{if(x.user?.id!==window.__moneySession.user.id){document.getElementById('root')?.replaceChildren();location.replace('/login');}}).catch(()=>{});});
 </script>
+<link rel="icon" type="image/png" sizes="32x32" href="/app-icons/money-hq-v1-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/app-icons/money-hq-v1-180.png">
+<link rel="manifest" href="/app-icons/money-hq-v1.webmanifest">
 </head>
 <body>
 <div id="bank-feed-toolbar" style="width:100%;background:#F7F4ED;padding-top:env(safe-area-inset-top,0px)">
@@ -1961,7 +1961,7 @@ function App() {
         fontWeight: 700,
         color: C.soft
       }
-    }, "YOUR MONEY HQ"), /*#__PURE__*/React.createElement("div", {
+    }, React.createElement("img", {src:"/app-icons/money-hq-v1-180.png",alt:"",width:34,height:34,style:{verticalAlign:"middle",borderRadius:9,marginRight:9}}), "YOUR MONEY HQ"), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 30,
         fontWeight: 800,
