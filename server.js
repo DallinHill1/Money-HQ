@@ -1,3 +1,4 @@
+import { registerBrandAssets } from './brand-assets.js';
 import express from 'express';
 import pg from 'pg';
 import { initAuthDb, installAuth } from './auth.js';
@@ -195,6 +196,7 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+registerBrandAssets(app);
 installAuth(app, pool);
 
 app.get('/api/plaid/status', async (req, res) => {
