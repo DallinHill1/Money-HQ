@@ -13,8 +13,9 @@ assert.equal(grade({status:'canceled'},'straight','home').result,'void');
 assert.equal(weekKey(new Date('2026-11-16T02:00Z')),'2026-11-09');assert.equal(weekKey(new Date('2026-11-16T15:00Z')),'2026-11-16');
 const start=new Date(Date.now()+3*86400000).toISOString();
 function event(id,homeId='1',awayId='2',rank=99){return {id:String(id),date:start,season:{year:new Date().getFullYear()},status:{type:{state:'pre',completed:false}},competitions:[{competitors:[{homeAway:'home',team:{id:homeId,displayName:'Home '+homeId},curatedRank:{current:rank},score:'0'},{homeAway:'away',team:{id:awayId,displayName:'Away '+awayId},curatedRank:{current:rank},score:'0'}],odds:[{provider:{name:'DraftKings'},spread:5.5,homeTeamOdds:{favorite:false,underdog:true},pointSpread:{home:{close:{line:'+5.5'}}}}]}]};}
-let events=Array.from({length:12},(_,i)=>event(100+i,String(i+1),String(i+30),i+1));events.push(event(200,'252','999'),event(201,'254','300'));
-const games=events.map(e=>normalizeEvent(e,new Date().getFullYear()));assert.equal(selectSlate(games).length,8);assert.ok(selectSlate(games).some(g=>g.home_id==='252'));assert.ok(selectSlate(games).some(g=>g.home_id==='254'));
+let events=Array.from({length:12},(_,i)=>event(100+i,String(i+1),String(i+30),i+1));events.push(event(200,'252','999'),event(201,'254','300'),event(202,'2483','301'));
+const games=events.map(e=>normalizeEvent(e,new Date().getFullYear()));assert.equal(selectSlate(games).length,8);assert.ok(selectSlate(games).some(g=>g.home_id==='252'));assert.ok(selectSlate(games).some(g=>g.home_id==='254'));assert.ok(selectSlate(games).some(g=>g.home_id==='2483'));
+const mandatoryOverflow=Array.from({length:9},(_,i)=>normalizeEvent(event(300+i,'2483',String(500+i)),new Date().getFullYear()));assert.equal(selectSlate(mandatoryOverflow).length,9);
 const signed=event(999);signed.competitions[0].odds[0].spread=7.5;signed.competitions[0].odds[0].pointSpread=undefined;signed.competitions[0].odds[0].homeTeamOdds={favorite:true};assert.equal(normalizeEvent(signed,2026).home_spread,-7.5);
 const absent=event(998);absent.competitions[0].odds=[];assert.equal(normalizeEvent(absent,2026).home_spread,null);
 const db=new PGlite();const pool={query:async(sql,args)=>{if(!args&&sql.includes(';')){await db.exec(sql);return {rows:[],rowCount:0};}const r=await db.query(sql,args);return {...r,rowCount:r.affectedRows||r.rows.length};}};
@@ -66,5 +67,5 @@ try{
  assert.equal(sent.action,'register');assert.equal(sent.name,'Typing Test');assert.equal(doc.querySelector('[name=email]'),emailInput);assert.equal(passwordInput.value,'Never-submit-123');assert.equal(doc.querySelector('[type=submit]').disabled,false);
  doc.querySelector('.modal-close').click();assert.equal(doc.querySelector('#modal'),null);assert.equal(doc.body.classList.contains('modal-open'),false);dom.window.close();
  console.log('PASS signup form: late refresh preserves inputs/focus/caret, background refresh pauses, mode switches preserve drafts, failed signup keeps typed values.');
- console.log('PASS Showdown: scoring thresholds, mandatory teams, automatic slate, Mountain weeks, signed/missing/frozen lines, public preview, two-user isolation, CSRF, kickoff locks, live/final scores, weekly/season boards, persistent picks, outage fallback, source protection and rate limits.');
+ console.log('PASS Showdown: scoring thresholds, BYU/Utah/Oregon inclusion, automatic slate, mandatory overflow, Mountain weeks, signed/missing/frozen lines, public preview, two-user isolation, CSRF, kickoff locks, live/final scores, weekly/season boards, persistent picks, outage fallback, source protection and rate limits.');
 }finally{server.close();await db.close();}

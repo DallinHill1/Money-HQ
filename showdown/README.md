@@ -7,7 +7,7 @@ Runs inside the existing Node service to fit the account's Railway Free resource
 ## Football data and rules
 
 - ESPN public college football scoreboard provides schedules, rankings, scores and DraftKings spreads. No API key or new paid subscription. This is an undocumented public feed, so availability is not guaranteed; existing schedules/picks survive an outage and the UI shows a delayed-data notice.
-- Eight upcoming games per week, prioritizing ranked matchups and always including ESPN team IDs 252 (BYU) and 254 (Utah). If fewer games exist, all available games are used. Calendar weeks start Monday in America/Denver.
+- Eight upcoming games per week, prioritizing ranked matchups and always including ESPN team IDs 252 (BYU), 254 (Utah), and 2483 (Oregon). If mandatory games ever exceed eight, the slate expands rather than dropping one. If fewer games exist, all available games are used. Calendar weeks start Monday in America/Denver.
 - A slate auto-publishes once and is retained, even as ranks change. Spreads freeze on first import, shared by all players; missing spreads stay unavailable until posted. Live spreads do not replace the original line.
 - Winner picks score one point. ATS favorites and pick'em lines score one; underdogs below +5.5 score two, and +5.5 or above score three. Pushes, canceled and postponed games score zero. Only provider-confirmed finals are graded.
 - Database time enforces kickoff locks on every write. Public pick reveals are blocked until kickoff. Weekly and season standings are computed from persisted picks and final results.
