@@ -1,5 +1,7 @@
 const root=document.querySelector('#app'),identity=document.querySelector('#identity'),logout=document.querySelector('#signout');
 const state={me:null,weeks:[],week:null,season:new Date().getFullYear(),mode:'straight',view:'picks',scope:'season',board:{straight:[],spread:[]},weekly:{straight:[],spread:[]},message:'',offset:0,busy:false};
+let renderPending=false;
+const modalOpen=()=>!!document.querySelector('#modal[open]');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=d=>new Intl.DateTimeFormat('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Denver',timeZoneName:'short'}).format(new Date(d));
 const weekLabel=w=>new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(w+'T12:00:00Z'));
@@ -15,9 +17,10 @@ async function refresh(){
   const [data,board,weekly]=await Promise.all([state.week?api('/week/'+state.week):null,api('/leaderboard'),state.week?api('/leaderboard?week='+state.week):{straight:[],spread:[]}]);
   state.data=data;state.board=board;state.weekly=weekly;state.lastSync=data?.lastSync||meta.lastSync;state.error=data?.error||meta.error;
   if(data)state.offset=new Date(data.serverNow).getTime()-Date.now();render();
- }catch(e){root.innerHTML=`<section class="panel"><h2>Taking a quick timeout</h2><p class="muted">${esc(e.message)}</p><button class="primary" id="retry">Try again</button></section>`;document.querySelector('#retry').onclick=refresh;}
+ }catch(e){if(modalOpen()){state.message=e.message;return;}root.innerHTML=`<section class="panel"><h2>Taking a quick timeout</h2><p class="muted">${esc(e.message)}</p><button class="primary" id="retry">Try again</button></section>`;document.querySelector('#retry').onclick=refresh;}
 }
 function render(){
+ if(modalOpen()){renderPending=true;return;}renderPending=false;
  identity.textContent=state.me?.name||`${state.season} SEASON`;
  logout.classList.remove('hidden');logout.textContent=state.me?'Log out':'Sign in';
  const games=state.data?.games||[],active=state.mode;
@@ -57,20 +60,44 @@ function wire(){
   catch(e){state.message=e.message;if(e.status===401){state.me=null;showAccount('login');}}
   finally{state.busy=false;await refresh();}
  });
- document.querySelectorAll('[data-reveal]').forEach(b=>b.onclick=async()=>{try{const picks=await api('/reveal/'+b.dataset.reveal);showDialog(`<h2>Game picks</h2><p class="muted">Revealed after kickoff</p>${picks.map(p=>`<div class="rule"><span>${esc(p.name)}<small class="reveal-mode">${p.mode==='straight'?'Straight Up':'Spread Challenge'}</small></span><b>${esc(p.team)}</b></div>`).join('')||'<p>No picks were submitted for this game.</p>'}`);}catch(e){state.message=e.message;render();}});
+ document.querySelectorAll('[data-reveal]').forEach(b=>b.onclick=async()=>{try{const picks=await api('/reveal/'+b.dataset.reveal);showDialog(`<h2 id="dialog-title">Game picks</h2><p class="muted">Revealed after kickoff</p>${picks.map(p=>`<div class="rule"><span>${esc(p.name)}<small class="reveal-mode">${p.mode==='straight'?'Straight Up':'Spread Challenge'}</small></span><b>${esc(p.team)}</b></div>`).join('')||'<p>No picks were submitted for this game.</p>'}`);}catch(e){state.message=e.message;render();}});
 }
-function showDialog(content){document.querySelector('#modal')?.remove();const d=document.createElement('dialog');d.id='modal';d.innerHTML=`<button class="modal-close ghost" aria-label="Close">✕</button>${content}`;document.body.append(d);d.querySelector('.modal-close').onclick=()=>d.close();d.addEventListener('close',()=>d.remove());d.addEventListener('click',e=>{if(e.target===d&&e.offsetX<0)d.close();});d.showModal();return d;}
+function showDialog(content){
+ document.querySelector('#modal')?.remove();
+ const d=document.createElement('dialog');d.id='modal';d.setAttribute('aria-labelledby','dialog-title');
+ d.innerHTML=`<button class="modal-close ghost" type="button" aria-label="Close">✕</button>${content}`;
+ document.body.append(d);document.body.classList.add('modal-open');
+ d.querySelector('.modal-close').onclick=()=>d.close();
+ d.addEventListener('close',()=>{d.remove();if(!modalOpen()){document.body.classList.remove('modal-open');if(renderPending)render();}});
+ // Keep drafts in place if a click/drag lands outside a field. Use Close or Escape to dismiss.
+ d.showModal();d.querySelector('input')?.focus({preventScroll:true});return d;
+}
 function showAccount(action='login'){
- const registering=action==='register';
- const d=showDialog(`<p class="eyebrow">WELCOME TO SATURDAY</p><h2>${registering?'Join the competition':'Welcome back'}</h2><p class="muted">${registering?'Free to play. Your picks, your record, all season.':'Sign in to pick up where you left off.'}</p><form id="account">${registering?'<label>Display name<input name="name" required minlength="2" maxlength="40" autocomplete="nickname" placeholder="How you’ll appear on the board"></label>':''}<label>Email<input name="email" type="email" required maxlength="254" autocomplete="email"></label><label>Password<input name="password" type="password" minlength="10" maxlength="128" required autocomplete="${registering?'new-password':'current-password'}"></label><p class="muted">Use at least 10 characters. Accounts are separate from Money HQ.</p><button class="primary" type="submit">${registering?'Create account':'Sign in'} →</button><p id="formerror" role="alert"></p></form><button class="switch-account" id="switch">${registering?'Already playing? Sign in':'New here? Create an account'}</button>`);
- d.querySelector('#switch').onclick=()=>showAccount(registering?'login':'register');
- d.querySelector('#account').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('[type=submit]');button.disabled=true;
-  try{state.me=await api('/account',{method:'POST',body:JSON.stringify({...Object.fromEntries(new FormData(e.target)),action})});d.close();state.message=registering?'You’re in. Pick your winners below.':'Welcome back. Your picks are ready.';await refresh();}
-  catch(error){d.querySelector('#formerror').textContent=error.message;button.disabled=false;}
+ let accountAction=action;
+ const d=showDialog(`<p class="eyebrow">WELCOME TO SATURDAY</p><h2 id="dialog-title"></h2><p class="muted" id="account-intro"></p><form id="account"><label id="name-label" for="account-name">Display name<input id="account-name" name="name" minlength="2" maxlength="40" autocomplete="nickname" placeholder="How you’ll appear on the board"></label><label for="account-email">Email<input id="account-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false"></label><label for="account-password">Password<input id="account-password" name="password" type="password" minlength="10" maxlength="128" required></label><p class="muted">Use at least 10 characters. Accounts are separate from Money HQ.</p><button class="primary" type="submit"></button><p id="formerror" role="alert"></p></form><button class="switch-account" type="button" id="switch"></button>`);
+ const name=d.querySelector('#account-name'),email=d.querySelector('#account-email'),password=d.querySelector('#account-password');
+ const button=d.querySelector('[type=submit]');
+ function setAction(){
+  const registering=accountAction==='register';
+  d.querySelector('#dialog-title').textContent=registering?'Join the competition':'Welcome back';
+  d.querySelector('#account-intro').textContent=registering?'Free to play. Your picks, your record, all season.':'Sign in to pick up where you left off.';
+  d.querySelector('#name-label').hidden=!registering;name.required=registering;name.disabled=!registering;
+  password.autocomplete=registering?'new-password':'current-password';
+  button.textContent=registering?'Create account →':'Sign in →';
+  d.querySelector('#switch').textContent=registering?'Already playing? Sign in':'New here? Create an account';
+  d.querySelector('#formerror').textContent='';
+ }
+ setAction();(accountAction==='register'?name:email).focus({preventScroll:true});
+ // Toggle the same inputs, preserving typed text, browser autofill and cursor state.
+ d.querySelector('#switch').onclick=()=>{accountAction=accountAction==='register'?'login':'register';setAction();email.focus({preventScroll:true});};
+ d.querySelector('#account').onsubmit=async e=>{
+  e.preventDefault();if(button.disabled)return;button.disabled=true;d.querySelector('#switch').disabled=true;
+  try{state.me=await api('/account',{method:'POST',body:JSON.stringify({...Object.fromEntries(new FormData(e.target)),action:accountAction})});d.close();state.message=accountAction==='register'?'You’re in. Pick your winners below.':'Welcome back. Your picks are ready.';await refresh();}
+  catch(error){d.querySelector('#formerror').textContent=error.message;button.disabled=false;d.querySelector('#switch').disabled=false;}
  };
 }
 logout.onclick=async()=>{if(!state.me){showAccount('login');return;}try{await api('/logout',{method:'POST',body:'{}'});state.me=null;state.message='You’re signed out.';await refresh();}catch(e){state.message=e.message;render();}};
 async function start(){try{state.me=await api('/me');}catch{}await refresh();}
-start();setInterval(()=>{if(!document.hidden&&!state.busy&&!document.querySelector('#modal'))refresh();},60000);
+start();setInterval(()=>{if(!document.hidden&&!state.busy&&!modalOpen())refresh();},60000);
 setInterval(()=>{if((state.data?.games||[]).some(g=>!g.locked&&new Date(g.start_at).getTime()<=now())){state.data.games.forEach(g=>{if(new Date(g.start_at).getTime()<=now())g.locked=true;});if(!state.busy)render();}},1000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!state.busy)refresh();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!state.busy&&!modalOpen())refresh();});

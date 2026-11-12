@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Saturday Showdown SS football">
+  <rect width="64" height="64" rx="17" fill="#c5ed53"/>
+  <path d="M5 32C16 8 48 8 59 32 48 56 16 56 5 32Z" fill="#080d12"/>
+  <path d="M24 20h16m-12-3v6m4-6v6m4-6v6" fill="none" stroke="#c5ed53" stroke-width="2" stroke-linecap="round"/>
+  <path d="M27 28H17v7h9v6H16m31-13H37v7h9v6H36" fill="none" stroke="#c5ed53" stroke-width="3.8" stroke-linejoin="round" stroke-linecap="square"/>
+</svg>
