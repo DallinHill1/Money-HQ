@@ -1,5 +1,8 @@
 name: Saturday Showdown automatic updates
 on:
+  push:
+    branches: [main]
+    paths: ['showdown/**', '.github/workflows/showdown-sync.yml']
   workflow_dispatch:
   schedule:
     - cron: '17 14 * 1,8-12 *'
