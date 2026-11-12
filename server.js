@@ -1,3 +1,4 @@
+import { installShowdown } from './showdown/server.js';
 import { registerBrandAssets } from './brand-assets.js';
 import express from 'express';
 import pg from 'pg';
@@ -197,6 +198,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 registerBrandAssets(app);
+installShowdown(app, pool);
 installAuth(app, pool);
 
 app.get('/api/plaid/status', async (req, res) => {
