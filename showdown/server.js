@@ -1,7 +1,7 @@
 import express from 'express';
 import { randomBytes, createHash, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { weekKey, seasonYear, normalizeEvent, selectSlate, grade, standings } from './logic.js';
+import { weekKey, seasonYear, normalizeEvent, selectSlate, mandatoryTeamIds, grade, standings } from './logic.js';
 const derive = promisify(scrypt);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const route = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -74,6 +74,14 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
       await db.query('UPDATE showdown.games SET featured=true WHERE id=ANY($1::text[])', [selected.map(g => g.id)]);
       await db.query('UPDATE showdown.weeks SET published=true WHERE id=$1', [week.id]);
     }
+    // A newly mandatory team may be added after a slate was published. Add its
+    // future game without removing existing games or invalidating saved picks.
+    await db.query(`UPDATE showdown.games g SET featured=true
+      FROM showdown.weeks w
+      WHERE g.week_id=w.id AND w.published=true AND w.id >= $1
+        AND g.featured=false AND g.status='scheduled' AND g.start_at>now()
+        AND (g.home_id=ANY($2::text[]) OR g.away_id=ANY($2::text[]))`,
+    [weekKey(clock()), mandatoryTeamIds]);
     await db.query("DELETE FROM showdown.sessions WHERE expires_at<now(); DELETE FROM showdown.attempts WHERE window_start<now()-INTERVAL '1 day';");
     lastSuccess = clock().toISOString(); lastError = null;
     await db.query('UPDATE showdown.sync_state SET last_success=$1,last_error=NULL WHERE id=1', [lastSuccess]);

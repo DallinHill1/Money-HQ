@@ -36,7 +36,8 @@ export function normalizeEvent(event, fallbackSeason) {
     home_id: String(home.team.id), away_id: String(away.team.id), start_at: start.toISOString(), home_score: status === 'scheduled' ? null : score(home), away_score: status === 'scheduled' ? null : score(away),
     status, detail: String(type.shortDetail || type.detail || ''), home_rank: rank(home), away_rank: rank(away), home_spread: spread, line_source: spread === null ? null : `ESPN / ${odds?.provider?.name || 'consensus'}` };
 }
-export const mandatory = game => [game.home_id, game.away_id].some(id => ['252', '254', '2483'].includes(String(id)));
+export const mandatoryTeamIds = ['252', '254', '2483'];
+export const mandatory = game => [game.home_id, game.away_id].some(id => mandatoryTeamIds.includes(String(id)));
 export function selectSlate(games, now = Date.now()) {
   const candidates = games.filter(g => g.status === 'scheduled' && new Date(g.start_at).getTime() > now);
   const interest = g => (g.home_rank && g.away_rank ? 1000 : 0) + (g.home_rank ? 30 - g.home_rank : 0) + (g.away_rank ? 30 - g.away_rank : 0) - Math.min(Math.abs(Number(g.home_spread || 0)), 40) / 100;
