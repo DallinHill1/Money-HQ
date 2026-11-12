@@ -43,7 +43,7 @@ try{
  for(const path of ['/server.js','/logic.js','/.env'])assert.equal((await req(path)).status,404);assert.equal((await fetch(origin+'/showdown/')).status,200);
  for(let i=0;i<13;i++)await req('/api/account',{method:'POST',body:{email:'rate@example.test',password:'Test-password-123',action:'login'}});assert.equal((await req('/api/account',{method:'POST',body:{email:'rate@example.test',password:'Test-password-123',action:'login'}})).status,429);
  const dom=new JSDOM(readFileSync(new URL('./public/index.html',import.meta.url),'utf8'),{url:origin+'/showdown/',runScripts:'outside-only'});
- dom.window.fetch=(path,options)=>fetch(new URL(path,origin),options);dom.window.setInterval=()=>0;
+ let browserRequests=0;const intervals=[];dom.window.fetch=(path,options)=>{browserRequests++;return fetch(new URL(path,origin),options);};dom.window.setInterval=(fn,ms)=>{intervals.push({fn,ms});return intervals.length;};
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
  dom.window.HTMLDialogElement.prototype.close=function(){this.dispatchEvent(new dom.window.Event('close'));};
  dom.window.eval(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'));
@@ -51,6 +51,20 @@ try{
  assert.equal(dom.window.document.querySelectorAll('.fixture').length,8);
  dom.window.document.querySelector('[data-mode=spread]').click();assert.match(dom.window.document.body.textContent,/Underdog covers, \+5.5 or more/);
  dom.window.document.querySelector('#standings').click();dom.window.document.querySelector('[data-scope=week]').click();assert.match(dom.window.document.body.textContent,/Weekly standings/);
- dom.window.document.querySelector('#join').click();assert.equal(dom.window.document.querySelector('[name=password]').minLength,10);dom.window.document.querySelector('.modal-close').click();dom.window.close();
+ dom.window.document.querySelector('#join').click();
+ const doc=dom.window.document,nameInput=doc.querySelector('[name=name]'),emailInput=doc.querySelector('[name=email]'),passwordInput=doc.querySelector('[name=password]');
+ assert.equal(passwordInput.minLength,10);nameInput.value='Typing Test';emailInput.value='typing@example.test';passwordInput.value='Never-submit-123';nameInput.focus();nameInput.setSelectionRange(4,4);
+ const originalRoot=doc.querySelector('#app').firstElementChild;
+ await dom.window.refresh();assert.equal(doc.querySelector('#app').firstElementChild,originalRoot);assert.equal(doc.querySelector('[name=name]'),nameInput);assert.equal(nameInput.selectionStart,4);assert.equal(doc.activeElement,nameInput);
+ Object.defineProperty(doc,'hidden',{value:false,configurable:true});const before=browserRequests;
+ doc.dispatchEvent(new dom.window.Event('visibilitychange'));intervals.find(i=>i.ms===60000).fn();assert.equal(browserRequests,before);
+ doc.querySelector('#switch').click();assert.equal(doc.querySelector('[name=email]'),emailInput);assert.equal(emailInput.value,'typing@example.test');assert.equal(nameInput.disabled,true);
+ doc.querySelector('#switch').click();assert.equal(doc.querySelector('[name=name]'),nameInput);assert.equal(nameInput.value,'Typing Test');assert.equal(passwordInput.value,'Never-submit-123');assert.equal(nameInput.disabled,false);
+ let sent;const originalFetch=dom.window.fetch;dom.window.fetch=async(path,options)=>{if(path.endsWith('/account')){sent=JSON.parse(options.body);return new Response(JSON.stringify({error:'Test sign-up error'}),{status:409});}return originalFetch(path,options);};
+ doc.querySelector('#account').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+ for(let n=0;n<100&&!doc.querySelector('#formerror').textContent;n++)await new Promise(r=>setTimeout(r,1));
+ assert.equal(sent.action,'register');assert.equal(sent.name,'Typing Test');assert.equal(doc.querySelector('[name=email]'),emailInput);assert.equal(passwordInput.value,'Never-submit-123');assert.equal(doc.querySelector('[type=submit]').disabled,false);
+ doc.querySelector('.modal-close').click();assert.equal(doc.querySelector('#modal'),null);assert.equal(doc.body.classList.contains('modal-open'),false);dom.window.close();
+ console.log('PASS signup form: late refresh preserves inputs/focus/caret, background refresh pauses, mode switches preserve drafts, failed signup keeps typed values.');
  console.log('PASS Showdown: scoring thresholds, mandatory teams, automatic slate, Mountain weeks, signed/missing/frozen lines, public preview, two-user isolation, CSRF, kickoff locks, live/final scores, weekly/season boards, persistent picks, outage fallback, source protection and rate limits.');
 }finally{server.close();await db.close();}
