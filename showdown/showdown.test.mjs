@@ -6,7 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { installShowdown } from './server.js';
 import { grade, normalizeEvent, selectSlate, weekKey } from './logic.js';
 process.env.NODE_ENV='test';
-for(const [spread,team,home,away,result,points] of [[-5.5,'home',30,20,'win',1],[-5,'away',24,20,'win',2],[-5.5,'away',24,20,'win',3],[5.5,'home',20,24,'win',3],[5,'home',20,24,'win',2],[-5,'home',25,20,'push',0],[0,'away',20,24,'win',1],[-5.5,'away',30,20,'loss',0]])assert.deepEqual(grade({status:'final',home_score:home,away_score:away,home_spread:spread},'spread',team),{result,points});
+for(const [spread,team,home,away,result,points] of [[-5.5,'home',30,20,'win',1],[-5,'away',24,20,'win',1],[-5.5,'away',24,20,'win',1],[5.5,'home',20,24,'win',1],[5,'home',20,24,'win',1],[-5,'away',20,24,'win',2],[-5.5,'away',20,24,'win',3],[5,'home',24,20,'win',2],[5.5,'home',24,20,'win',3],[-5,'home',25,20,'push',0],[0,'away',20,24,'win',1],[-5.5,'away',30,20,'loss',0]])assert.deepEqual(grade({status:'final',home_score:home,away_score:away,home_spread:spread},'spread',team),{result,points});
 assert.equal(grade({status:'live',home_score:40,away_score:0},'straight','home').result,'pending');
 assert.equal(grade({status:'final',home_score:21,away_score:21},'straight','home').result,'push');
 assert.equal(grade({status:'canceled'},'straight','home').result,'void');
@@ -50,7 +50,7 @@ try{
  dom.window.eval(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'));
  for(let n=0;n<100&&!dom.window.document.querySelector('[data-mode]');n++)await new Promise(r=>setTimeout(r,10));
  assert.equal(dom.window.document.querySelectorAll('.fixture').length,8);
- dom.window.document.querySelector('[data-mode=spread]').click();assert.match(dom.window.document.body.textContent,/Underdog covers, \+5.5 or more/);
+ dom.window.document.querySelector('[data-mode=spread]').click();assert.match(dom.window.document.body.textContent,/Underdog \+5.5 or more wins outright/);
  dom.window.document.querySelector('#standings').click();dom.window.document.querySelector('[data-scope=week]').click();assert.match(dom.window.document.body.textContent,/Weekly standings/);
  dom.window.document.querySelector('#join').click();
  const doc=dom.window.document,nameInput=doc.querySelector('[name=name]'),emailInput=doc.querySelector('[name=email]'),passwordInput=doc.querySelector('[name=password]');
