@@ -1,0 +1,25 @@
+{
+  "name": "Saturday Showdown",
+  "short_name": "Showdown",
+  "description": "College football pick'em",
+  "id": "/showdown/",
+  "start_url": "/showdown/",
+  "scope": "/showdown/",
+  "display": "standalone",
+  "background_color": "#071629",
+  "theme_color": "#071629",
+  "icons": [
+    {
+      "src": "/showdown/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/showdown/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
