@@ -1,0 +1,18 @@
+name: Saturday Showdown automatic updates
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 14 * 1,8-12 *'
+    - cron: '*/15 16-23 * 1,8-12 6'
+    - cron: '*/15 0-7 * 1,8-12 0'
+permissions: {}
+concurrency:
+  group: showdown-data-refresh
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Refresh schedules, lines and final results
+        run: curl --fail --silent --show-error --retry 2 --max-time 90 https://money-hq-production.up.railway.app/showdown/api/status
