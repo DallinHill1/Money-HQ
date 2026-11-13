@@ -19,13 +19,13 @@ const mandatoryOverflow=Array.from({length:9},(_,i)=>normalizeEvent(event(300+i,
 const signed=event(999);signed.competitions[0].odds[0].spread=7.5;signed.competitions[0].odds[0].pointSpread=undefined;signed.competitions[0].odds[0].homeTeamOdds={favorite:true};assert.equal(normalizeEvent(signed,2026).home_spread,-7.5);
 const absent=event(998);absent.competitions[0].odds=[];assert.equal(normalizeEvent(absent,2026).home_spread,null);
 const db=new PGlite();const pool={query:async(sql,args)=>{if(!args&&sql.includes(';')){await db.exec(sql);return {rows:[],rowCount:0};}const r=await db.query(sql,args);return {...r,rowCount:r.affectedRows||r.rows.length};}};
-let upstreamFails=false;
-const fetcher=async url=>{if(upstreamFails)throw Error('Test provider outage');return {ok:true,json:async()=>({events,season:{year:new Date().getFullYear()}})};};
+let upstreamFails=false,providerGate=null;
+const fetcher=async url=>{if(providerGate)await providerGate;if(upstreamFails)throw Error('Test provider outage');return {ok:true,json:async()=>({events,season:{year:new Date().getFullYear()}})};};
 const app=express();const control=installShowdown(app,pool,{fetcher});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const origin='http://127.0.0.1:'+server.address().port;
 async function req(path,{method='GET',body,session,headers={}}={}){const r=await fetch(origin+'/showdown'+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(session?{Cookie:session.cookie,'X-CSRF-Token':session.csrfToken}:{}),...headers},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json().catch(()=>null),cookie:r.headers.get('set-cookie')};}
 async function account(email,action='register'){const r=await req('/api/account',{method:'POST',body:{name:'Player '+email,email,password:'Test-password-123',action}});assert.equal(r.status,200,JSON.stringify(r.data));return {...r.data,cookie:r.cookie.split(';')[0]};}
 try{
- await control.ready();const meta=await req('/api/weeks');assert.equal(meta.status,200);const week=meta.data.weeks[0].id;assert.equal(meta.data.weeks[0].published,true);
+ await control.ready();await control.refresh(true);const meta=await req('/api/weeks');assert.equal(meta.status,200);const week=meta.data.weeks[0].id;assert.equal(meta.data.weeks[0].published,true);
  let slate=(await req('/api/week/'+week)).data;assert.equal(slate.games.length,8);const id=slate.games[0].id;assert.equal((await req('/api/status')).data.apiKeyRequired,false);
  assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode:'straight',team:'home'}})).status,401);
  const alice=await account('alice@example.test'),bob=await account('bob@example.test');assert.match(alice.cookie,/showdown_session=/);
@@ -33,6 +33,13 @@ try{
  for(const headers of [{Origin:'https://attacker.example'},{'X-CSRF-Token':'wrong'}])assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode:'straight',team:'home'},session:alice,headers})).status,403);
  for(const [mode,team] of [['straight','home'],['spread','away']])assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode,team},session:alice})).status,200);
  assert.equal((await req('/api/week/'+week,{session:alice})).data.games.find(g=>g.id===id).straight,'home');assert.equal((await req('/api/week/'+week,{session:bob})).data.games.find(g=>g.id===id).straight,null);assert.equal((await req('/api/reveal/'+id)).status,403);
+ // A stalled provider must not hold cached games, confirmed identity or existing picks hostage.
+ let releaseProvider;providerGate=new Promise(resolve=>{releaseProvider=resolve;});
+ const syncing=control.refresh(true);
+ const boot=await Promise.race([req('/api/bootstrap?week='+week,{session:alice}),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('Bootstrap waited for football provider')),1500);timer.unref();})]);
+ assert.equal(boot.data.me.id,alice.id);assert.equal(boot.data.data.games.find(g=>g.id===id).straight,'home');assert.equal(boot.data.weeks.length,1);
+ assert.equal((await req('/api/week/'+week,{session:alice})).status,200);
+ releaseProvider();providerGate=null;await syncing;
  const oldLine=(await db.query('SELECT home_spread FROM showdown.games WHERE id=$1',[id])).rows[0].home_spread;events.forEach(e=>e.competitions[0].odds[0].pointSpread.home.close.line='-20.5');await control.refresh(true);
  assert.equal((await db.query('SELECT home_spread FROM showdown.games WHERE id=$1',[id])).rows[0].home_spread,oldLine);assert.equal((await req('/api/week/'+week)).data.games.length,8);
  await db.query("UPDATE showdown.games SET start_at=now()-INTERVAL '1 minute',status='live',home_score=14,away_score=10 WHERE id=$1",[id]);assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode:'straight',team:'away'},session:alice})).status,409);
@@ -49,7 +56,8 @@ try{
  dom.window.HTMLDialogElement.prototype.close=function(){this.dispatchEvent(new dom.window.Event('close'));};
  dom.window.eval(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'));
  for(let n=0;n<100&&!dom.window.document.querySelector('[data-mode]');n++)await new Promise(r=>setTimeout(r,10));
- assert.equal(dom.window.document.querySelectorAll('.fixture').length,8);
+ for(let n=0;n<100&&dom.window.document.querySelectorAll('.fixture').length!==8;n++)await new Promise(r=>setTimeout(r,10));
+ assert.equal(dom.window.document.querySelectorAll('.fixture').length,8);assert.equal(browserRequests,1,'One request restores session, picks and boards');
  dom.window.document.querySelector('[data-mode=spread]').click();assert.match(dom.window.document.body.textContent,/Underdog \+5.5 or more wins outright/);
  dom.window.document.querySelector('#standings').click();dom.window.document.querySelector('[data-scope=week]').click();assert.match(dom.window.document.body.textContent,/Weekly standings/);
  dom.window.document.querySelector('#join').click();
@@ -66,6 +74,30 @@ try{
  for(let n=0;n<100&&!doc.querySelector('#formerror').textContent;n++)await new Promise(r=>setTimeout(r,1));
  assert.equal(sent.action,'register');assert.equal(sent.name,'Typing Test');assert.equal(doc.querySelector('[name=email]'),emailInput);assert.equal(passwordInput.value,'Never-submit-123');assert.equal(doc.querySelector('[type=submit]').disabled,false);
  doc.querySelector('.modal-close').click();assert.equal(doc.querySelector('#modal'),null);assert.equal(doc.body.classList.contains('modal-open'),false);dom.window.close();
+ // Simulate slow saves without changing real user data. Each tap paints immediately;
+ // requests for the same pick stay ordered and a failed write rolls back.
+ const ui=new JSDOM(readFileSync(new URL('./public/index.html',import.meta.url),'utf8'),{url:origin+'/showdown/',runScripts:'outside-only'});
+ const initial=(await req('/api/bootstrap?week='+week,{session:again})).data;
+ initial.data.games.forEach(g=>{g.locked=false;g.status='scheduled';g.start_at=start;});
+ let bootstrapRelease;const bootGate=new Promise(resolve=>bootstrapRelease=resolve),writes=[];
+ ui.window.setInterval=()=>0;ui.window.fetch=async(path,options)=>{
+  if(path.includes('/bootstrap')){await bootGate;return new Response(JSON.stringify(initial));}
+  if(path.endsWith('/pick'))return new Promise(resolve=>writes.push({body:JSON.parse(options.body),resolve}));
+ };
+ ui.window.eval(readFileSync(new URL('./public/app.js',import.meta.url),'utf8'));
+ assert.match(ui.window.document.body.textContent,/Restoring your session/);assert.equal(ui.window.document.querySelector('#join'),null);
+ bootstrapRelease();for(let n=0;n<100&&!ui.window.document.querySelector('[data-pick]');n++)await new Promise(r=>setTimeout(r,1));
+ const pickId=initial.data.games[1].id;
+ const pick=side=>ui.window.document.querySelector(`[data-pick="${pickId}"][data-side="${side}"]`);
+ pick('home').click();assert.equal(pick('home').getAttribute('aria-pressed'),'true');assert.match(pick('home').closest('article').textContent,/Saving pick/);
+ assert.equal(ui.window.document.querySelector(`[data-pick="${initial.data.games[2].id}"]`).disabled,false);
+ pick('away').click();assert.equal(writes.length,1);assert.equal(pick('away').getAttribute('aria-pressed'),'true');
+ writes[0].resolve(new Response('{"ok":true}'));await new Promise(r=>setTimeout(r,1));assert.equal(writes.length,2);assert.equal(writes[1].body.team,'away');
+ writes[1].resolve(new Response('{"ok":true}'));await new Promise(r=>setTimeout(r,1));assert.match(pick('away').closest('article').textContent,/Pick saved/);
+ pick('home').click();writes[2].resolve(new Response('{"error":"Try again"}',{status:503}));await new Promise(r=>setTimeout(r,1));assert.equal(pick('away').getAttribute('aria-pressed'),'true');assert.match(ui.window.document.body.textContent,/Try again/);
+ ui.window.fetch=async()=>{throw Error('Connection interrupted');};await ui.window.refresh();assert.equal(ui.window.document.querySelector('#identity').textContent,again.name);assert.equal(ui.window.document.querySelector('#join'),null);
+ ui.window.close();
+ console.log('PASS speed: cached reads survive stalled provider, single-request startup restores session, optimistic taps remain enabled, rapid changes save in order, failed writes roll back and connection errors preserve identity.');
  console.log('PASS signup form: late refresh preserves inputs/focus/caret, background refresh pauses, mode switches preserve drafts, failed signup keeps typed values.');
  console.log('PASS Showdown: scoring thresholds, BYU/Utah/Oregon inclusion, automatic slate, mandatory overflow, Mountain weeks, signed/missing/frozen lines, public preview, two-user isolation, CSRF, kickoff locks, live/final scores, weekly/season boards, persistent picks, outage fallback, source protection and rate limits.');
 }finally{server.close();await db.close();}
