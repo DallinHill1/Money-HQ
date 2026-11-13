@@ -16,7 +16,7 @@ export function grade(game, mode, team) {
   if (!(team === 'home' ? margin > 0 : margin < 0)) return { result: 'loss', points: 0 };
   const line = team === 'home' ? Number(game.home_spread) : -Number(game.home_spread);
   const outrightWin = team === 'home' ? delta > 0 : delta < 0;
-  return { result: 'win', points: mode === 'spread' && line > 0 && outrightWin ? (line >= 5.5 ? 3 : 2) : 1 };
+  return { result: 'win', points: mode === 'spread' && line > 0 ? (outrightWin ? (line >= 5.5 ? 3 : 2) : 0) : 1 };
 }
 export function normalizeEvent(event, fallbackSeason) {
   const comp = event.competitions?.[0];
