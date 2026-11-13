@@ -24,7 +24,11 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
   const cookieName = process.env.NODE_ENV === 'test' ? 'showdown_session' : '__Secure-showdown_session';
   const cookieOptions = { path: '/showdown', httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV !== 'test' };
   async function ready() {
-    if (!initialization) initialization = db.query(schema).catch(error => { initialization = null; throw error; });
+    if (!initialization) initialization = db.query(schema).then(async () => {
+      const saved = (await db.query('SELECT last_success,last_error FROM showdown.sync_state WHERE id=1')).rows[0];
+      lastSuccess = saved?.last_success || null; lastError = saved?.last_error || null;
+      lastAttempt = lastSuccess ? new Date(lastSuccess).getTime() : 0;
+    }).catch(error => { initialization = null; throw error; });
     await initialization;
   }
   async function getJson(url) {
@@ -96,6 +100,8 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
     }).finally(() => { syncing = null; });
     return syncing;
   }
+  // Saved slates and sessions remain usable while ESPN refreshes in the background.
+  function queueRefresh() { setImmediate(() => { void refresh().catch(error => console.warn('[Showdown] Background refresh:', error.message)); }); }
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
     res.set('Content-Security-Policy', "default-src 'self'; img-src 'self' https://a.espncdn.com; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -156,15 +162,31 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
     res.status(status.last_success?200:503).json({ok:!!status.last_success,season,source:'ESPN',apiKeyRequired:false,lastSync:status.last_success,error:status.last_error,featuredGames:count});
   }));
   router.get('/api/weeks',route(async(req,res)=>{
-    await refresh();const r=await db.query('SELECT id,published,season FROM showdown.weeks WHERE published=true AND season=$1 ORDER BY id DESC',[seasonYear(clock())]);res.json({weeks:r.rows,currentWeek:weekKey(clock()),season:seasonYear(clock()),lastSync:lastSuccess,error:lastError});
+    queueRefresh();const r=await db.query('SELECT id,published,season FROM showdown.weeks WHERE published=true AND season=$1 ORDER BY id DESC',[seasonYear(clock())]);res.json({weeks:r.rows,currentWeek:weekKey(clock()),season:seasonYear(clock()),lastSync:lastSuccess,error:lastError});
+  }));
+  async function readWeek(id, member) {
+    const week=(await db.query('SELECT * FROM showdown.weeks WHERE id=$1 AND published=true',[id])).rows[0];
+    if(!week)return null;
+    const games=(await db.query('SELECT * FROM showdown.games WHERE week_id=$1 AND featured=true ORDER BY start_at,id',[week.id])).rows;
+    const picks=member?(await db.query('SELECT p.game_id,p.mode,p.team FROM showdown.picks p JOIN showdown.games g ON g.id=p.game_id WHERE p.member_id=$1 AND g.week_id=$2',[member.id,week.id])).rows:[];
+    const mine=Object.fromEntries(picks.map(p=>[p.game_id+':'+p.mode,p.team]));
+    return {week,games:games.map(g=>({...g,home_spread:g.home_spread===null?null:Number(g.home_spread),locked:new Date(g.start_at)<=clock()||g.status!=='scheduled',straight:mine[g.id+':straight']||null,spread:mine[g.id+':spread']||null,straightGrade:mine[g.id+':straight']?grade(g,'straight',mine[g.id+':straight']):null,spreadGrade:mine[g.id+':spread']?grade(g,'spread',mine[g.id+':spread']):null})),serverNow:clock().toISOString(),lastSync:lastSuccess,error:lastError};
+  }
+  async function readStandings(week = null) {
+    return (await db.query(`SELECT m.id AS member_id,m.name,p.mode,p.team,g.* FROM showdown.picks p JOIN showdown.members m ON m.id=p.member_id JOIN showdown.games g ON g.id=p.game_id JOIN showdown.weeks w ON w.id=g.week_id WHERE w.season=$1 AND g.featured=true AND w.published=true AND ($2::text IS NULL OR g.week_id=$2)`,[seasonYear(clock()),week])).rows;
+  }
+  router.get('/api/bootstrap',route(async(req,res)=>{
+    queueRefresh();
+    const season=seasonYear(clock()),currentWeek=weekKey(clock());
+    const weeks=(await db.query('SELECT id,published,season FROM showdown.weeks WHERE published=true AND season=$1 ORDER BY id DESC',[season])).rows;
+    const requested=typeof req.query.week==='string'?req.query.week:null;
+    const selected=weeks.find(w=>w.id===requested)||weeks.find(w=>w.id===currentWeek)||weeks.find(w=>w.id>currentWeek)||weeks[0];
+    const [data,rows]=await Promise.all([selected?readWeek(selected.id,req.member):null,readStandings()]);
+    res.json({me:req.member?{id:req.member.id,name:req.member.name,csrfToken:req.member.csrf}:null,weeks,season,currentWeek,week:selected?.id||null,data,board:standings(rows),weekly:standings(rows.filter(r=>r.week_id===selected?.id)),lastSync:lastSuccess,error:lastError,serverNow:clock().toISOString()});
   }));
   router.get('/api/week/:id',route(async(req,res)=>{
-    await refresh();const week=(await db.query('SELECT * FROM showdown.weeks WHERE id=$1 AND published=true',[req.params.id])).rows[0];
-    if(!week)return res.status(404).json({error:'Week unavailable.'});
-    const games=(await db.query('SELECT * FROM showdown.games WHERE week_id=$1 AND featured=true ORDER BY start_at,id',[week.id])).rows;
-    const picks=req.member?(await db.query('SELECT p.game_id,p.mode,p.team FROM showdown.picks p JOIN showdown.games g ON g.id=p.game_id WHERE p.member_id=$1 AND g.week_id=$2',[req.member.id,week.id])).rows:[];
-    const mine=Object.fromEntries(picks.map(p=>[p.game_id+':'+p.mode,p.team]));
-    res.json({week,games:games.map(g=>({...g,home_spread:g.home_spread===null?null:Number(g.home_spread),locked:new Date(g.start_at)<=clock()||g.status!=='scheduled',straight:mine[g.id+':straight']||null,spread:mine[g.id+':spread']||null,straightGrade:mine[g.id+':straight']?grade(g,'straight',mine[g.id+':straight']):null,spreadGrade:mine[g.id+':spread']?grade(g,'spread',mine[g.id+':spread']):null})),serverNow:clock().toISOString(),lastSync:lastSuccess,error:lastError});
+    queueRefresh();const data=await readWeek(req.params.id,req.member);
+    if(!data)return res.status(404).json({error:'Week unavailable.'});res.json(data);
   }));
   router.put('/api/pick',auth,csrf,route(async(req,res)=>{
     const {gameId,mode,team}=req.body;
@@ -179,7 +201,7 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
   }));
   router.get('/api/leaderboard',route(async(req,res)=>{
     const week=typeof req.query.week==='string'?req.query.week:null;
-    const rows=(await db.query(`SELECT m.id AS member_id,m.name,p.mode,p.team,g.* FROM showdown.picks p JOIN showdown.members m ON m.id=p.member_id JOIN showdown.games g ON g.id=p.game_id JOIN showdown.weeks w ON w.id=g.week_id WHERE w.season=$1 AND g.featured=true AND w.published=true AND ($2::text IS NULL OR g.week_id=$2)`,[seasonYear(clock()),week])).rows;
+    const rows=await readStandings(week);
     res.json(standings(rows));
   }));
   router.get('/api/reveal/:id',route(async(req,res)=>{
