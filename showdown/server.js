@@ -193,10 +193,10 @@ export function installShowdown(app, db, { fetcher = fetch, clock = () => new Da
     if(!['straight','spread'].includes(mode)||!['home','away'].includes(team)||typeof gameId!=='string')return res.status(400).json({error:'Invalid pick.'});
     // The database rechecks kickoff within the same atomic write; client clocks never decide eligibility.
     const r=await db.query(`INSERT INTO showdown.picks(member_id,game_id,mode,team)
-      SELECT $1,g.id,$3,$4 FROM showdown.games g JOIN showdown.weeks w ON w.id=g.week_id WHERE g.id=$2 AND g.featured=true AND w.published=true AND g.start_at>clock_timestamp() AND g.status='scheduled' AND ($3='straight' OR g.home_spread IS NOT NULL)
+      SELECT $1,g.id,$3,$4 FROM showdown.games g JOIN showdown.weeks w ON w.id=g.week_id WHERE g.id=$2 AND g.featured=true AND w.published=true AND g.start_at>clock_timestamp() AND g.status='scheduled'
       ON CONFLICT(member_id,game_id,mode) DO UPDATE SET team=EXCLUDED.team,created_at=now()
       WHERE EXISTS(SELECT 1 FROM showdown.games g WHERE g.id=$2 AND g.start_at>clock_timestamp() AND g.status='scheduled') RETURNING game_id`,[req.member.id,gameId,mode,team]);
-    if(!r.rows.length)return res.status(409).json({error:'This pick is locked, unavailable, or waiting for a spread.'});
+    if(!r.rows.length)return res.status(409).json({error:'This pick is locked or unavailable.'});
     res.json({ok:true});
   }));
   router.get('/api/leaderboard',route(async(req,res)=>{
