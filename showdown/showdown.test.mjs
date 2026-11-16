@@ -4,9 +4,26 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { installShowdown } from './server.js';
-import { grade, normalizeEvent, selectSlate, weekKey } from './logic.js';
+import { grade, normalizeEvent, selectSlate, weekKey, standings } from './logic.js';
 process.env.NODE_ENV='test';
-for(const [spread,team,home,away,result,points] of [[-5.5,'home',30,20,'win',1],[-5,'away',24,20,'win',0],[-5.5,'away',24,20,'win',0],[5.5,'home',20,24,'win',0],[5,'home',20,24,'win',0],[-5,'away',20,24,'win',2],[-5.5,'away',20,24,'win',3],[5,'home',24,20,'win',2],[5.5,'home',24,20,'win',3],[-5,'home',25,20,'push',0],[0,'away',20,24,'win',1],[-5.5,'away',30,20,'loss',0]])assert.deepEqual(grade({status:'final',home_score:home,away_score:away,home_spread:spread},'spread',team),{result,points});
+for(const [spread,team,home,away,result,points] of [
+ [-5.5,'home',24,20,'win',1], // Favorite wins without covering.
+ [-5,'home',25,20,'win',1], // Winning margin equals spread: still a win.
+ [-20,'home',21,20,'win',1],
+ [5,'away',20,24,'win',1], // Away favorite wins without covering.
+ [-5,'away',24,20,'loss',0], // Losing underdog covers, but earns no points.
+ [-5.5,'away',24,20,'loss',0],
+ [5.5,'home',20,24,'loss',0],
+ [-5,'away',20,24,'win',2],[-5.5,'away',20,24,'win',3],
+ [5,'home',24,20,'win',2],[5.5,'home',24,20,'win',3],
+ [0,'away',20,24,'win',1],[null,'home',24,20,'win',1],
+ [5.5,'home',21,21,'push',0],[-5.5,'away',30,20,'loss',0]
+])assert.deepEqual(grade({status:'final',home_score:home,away_score:away,home_spread:spread},'spread',team),{result,points});
+const historical=standings([
+ {member_id:1,name:'Player',mode:'spread',team:'home',status:'final',home_score:24,away_score:20,home_spread:-5.5},
+ {member_id:1,name:'Player',mode:'spread',team:'away',status:'final',home_score:24,away_score:20,home_spread:-5.5},
+ {member_id:1,name:'Player',mode:'spread',team:'home',status:'final',home_score:24,away_score:20,home_spread:5.5}
+]);assert.equal(historical.spread[0].points,4);assert.equal(historical.spread[0].wins,2);assert.equal(historical.spread[0].losses,1);
 assert.equal(grade({status:'live',home_score:40,away_score:0},'straight','home').result,'pending');
 assert.equal(grade({status:'final',home_score:21,away_score:21},'straight','home').result,'push');
 assert.equal(grade({status:'canceled'},'straight','home').result,'void');
@@ -40,11 +57,21 @@ try{
  assert.equal(boot.data.me.id,alice.id);assert.equal(boot.data.data.games.find(g=>g.id===id).straight,'home');assert.equal(boot.data.weeks.length,1);
  assert.equal((await req('/api/week/'+week,{session:alice})).status,200);
  releaseProvider();providerGate=null;await syncing;
+ const noLine=slate.games[1].id;
+ await db.query('UPDATE showdown.games SET home_spread=NULL WHERE id=$1',[noLine]);
+ assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:noLine,mode:'spread',team:'home'},session:bob})).status,200);
+ await db.query('UPDATE showdown.games SET home_spread=5.5 WHERE id=$1',[noLine]);
  const oldLine=(await db.query('SELECT home_spread FROM showdown.games WHERE id=$1',[id])).rows[0].home_spread;events.forEach(e=>e.competitions[0].odds[0].pointSpread.home.close.line='-20.5');await control.refresh(true);
  assert.equal((await db.query('SELECT home_spread FROM showdown.games WHERE id=$1',[id])).rows[0].home_spread,oldLine);assert.equal((await req('/api/week/'+week)).data.games.length,8);
  await db.query("UPDATE showdown.games SET start_at=now()-INTERVAL '1 minute',status='live',home_score=14,away_score=10 WHERE id=$1",[id]);assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode:'straight',team:'away'},session:alice})).status,409);
  slate=(await req('/api/week/'+week,{session:alice})).data;assert.equal(slate.games.find(g=>g.id===id).locked,true);assert.equal(slate.games.find(g=>g.id===id).home_score,14);assert.equal((await req('/api/reveal/'+id)).data.length,2);
- await db.query("UPDATE showdown.games SET status='final',home_score=24,away_score=20 WHERE id=$1",[id]);const board=(await req('/api/leaderboard')).data;assert.equal(board.straight[0].wins,1);assert.equal(board.spread[0].points,0);
+ await db.query("UPDATE showdown.games SET status='final',home_score=24,away_score=20 WHERE id=$1",[id]);const board=(await req('/api/leaderboard')).data;assert.equal(board.straight[0].wins,1);assert.equal(board.spread.find(p=>p.id===alice.id).points,0);assert.equal(board.spread.find(p=>p.id===alice.id).losses,1);
+ await db.query('UPDATE showdown.games SET home_spread=-5.5 WHERE id=$1',[id]);
+ assert.equal((await req('/api/pick',{method:'PUT',body:{gameId:id,mode:'spread',team:'home'},session:bob})).status,409);
+ await db.query("INSERT INTO showdown.picks(member_id,game_id,mode,team) VALUES($1,$2,'spread','home')",[bob.id,id]);
+ const corrected=(await req('/api/leaderboard?week='+week)).data.spread;assert.equal(corrected.find(p=>p.id===bob.id).points,1);assert.equal(corrected.find(p=>p.id===bob.id).wins,1);
+ assert.equal((await req('/api/leaderboard')).data.spread.find(p=>p.id===bob.id).points,1);
+
  assert.equal((await req('/api/leaderboard?week='+week)).data.straight[0].wins,1);assert.deepEqual((await req('/api/leaderboard?week=1900-01-01')).data,{straight:[],spread:[]});
  await req('/api/logout',{method:'POST',body:{},session:alice});assert.equal((await req('/api/me',{session:alice})).data,null);const again=await account('alice@example.test','login');assert.equal((await req('/api/week/'+week,{session:again})).data.games.find(g=>g.id===id).straight,'home');
  upstreamFails=true;await control.refresh(true);assert.equal((await req('/api/status')).data.ok,true);assert.equal((await req('/api/week/'+week)).data.games.length,8);
@@ -58,7 +85,7 @@ try{
  for(let n=0;n<100&&!dom.window.document.querySelector('[data-mode]');n++)await new Promise(r=>setTimeout(r,10));
  for(let n=0;n<100&&dom.window.document.querySelectorAll('.fixture').length!==8;n++)await new Promise(r=>setTimeout(r,10));
  assert.equal(dom.window.document.querySelectorAll('.fixture').length,8);assert.equal(browserRequests,1,'One request restores session, picks and boards');
- dom.window.document.querySelector('[data-mode=spread]').click();assert.match(dom.window.document.body.textContent,/Underdog \+5.5 or more wins outright/);
+ dom.window.document.querySelector('[data-mode=spread]').click();assert.doesNotMatch(dom.window.document.body.textContent,/ATS|if only covers/);assert.match(dom.window.document.body.textContent,/Underdog \+5.5 or more wins/);
  dom.window.document.querySelector('#standings').click();dom.window.document.querySelector('[data-scope=week]').click();assert.match(dom.window.document.body.textContent,/Weekly standings/);
  dom.window.document.querySelector('#join').click();
  const doc=dom.window.document,nameInput=doc.querySelector('[name=name]'),emailInput=doc.querySelector('[name=email]'),passwordInput=doc.querySelector('[name=password]');
