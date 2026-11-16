@@ -10,13 +10,11 @@ export function grade(game, mode, team) {
   if (['canceled', 'postponed'].includes(game.status)) return { result: 'void', points: 0 };
   if (game.status !== 'final' || game.home_score == null || game.away_score == null) return { result: 'pending', points: 0 };
   const delta = Number(game.home_score) - Number(game.away_score);
-  if (mode === 'spread' && game.home_spread == null) return { result: 'pending', points: 0 };
-  const margin = delta + (mode === 'spread' ? Number(game.home_spread) : 0);
-  if (margin === 0) return { result: 'push', points: 0 };
-  if (!(team === 'home' ? margin > 0 : margin < 0)) return { result: 'loss', points: 0 };
-  const line = team === 'home' ? Number(game.home_spread) : -Number(game.home_spread);
-  const outrightWin = team === 'home' ? delta > 0 : delta < 0;
-  return { result: 'win', points: mode === 'spread' && line > 0 ? (outrightWin ? (line >= 5.5 ? 3 : 2) : 0) : 1 };
+  // Both modes pick the outright winner. The frozen spread only sets an upset bonus.
+  if (delta === 0) return { result: 'push', points: 0 };
+  if (!(team === 'home' ? delta > 0 : delta < 0)) return { result: 'loss', points: 0 };
+  const line = game.home_spread == null ? 0 : (team === 'home' ? Number(game.home_spread) : -Number(game.home_spread));
+  return { result: 'win', points: 1 + (mode === 'spread' && line > 0 ? (line >= 5.5 ? 2 : 1) : 0) };
 }
 export function normalizeEvent(event, fallbackSeason) {
   const comp = event.competitions?.[0];
